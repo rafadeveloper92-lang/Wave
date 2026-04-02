@@ -1,0 +1,9 @@
+{
+  "name": "Wave",
+  "description": "A hybrid messaging and social media platform that combines the best of WhatsApp and modern social networks.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}

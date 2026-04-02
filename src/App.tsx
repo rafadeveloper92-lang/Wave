@@ -19,10 +19,11 @@ import ReelsScreen from './pages/ReelsScreen';
 import GroupsScreen from './pages/GroupsScreen';
 import DiscoverScreen from './pages/DiscoverScreen';
 import ProfileScreen from './pages/ProfileScreen';
+import TodosScreen from './pages/TodosScreen';
 import ChatDetailScreen from './pages/ChatDetailScreen';
 import { AnimatePresence, motion } from 'motion/react';
 
-type Tab = 'chats' | 'reels' | 'groups' | 'discover' | 'profile';
+type Tab = 'chats' | 'reels' | 'groups' | 'discover' | 'profile' | 'todos';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('chats');
@@ -39,6 +40,7 @@ export default function App() {
       case 'groups': return <GroupsScreen onGroupClick={(group) => setSelectedGroup(group)} />;
       case 'discover': return <DiscoverScreen />;
       case 'profile': return <ProfileScreen />;
+      case 'todos': return <TodosScreen />;
       default: return <ChatsScreen onChatClick={(chat) => setSelectedChat(chat)} />;
     }
   };
@@ -176,6 +178,12 @@ export default function App() {
           onClick={() => setActiveTab('discover')} 
           icon={<Compass size={28} strokeWidth={2.5} />} 
           label="Discover" 
+        />
+        <NavButton 
+          active={activeTab === 'todos'} 
+          onClick={() => setActiveTab('todos')} 
+          icon={<Plus size={28} strokeWidth={2.5} />} 
+          label="Todos" 
         />
         <NavButton 
           active={activeTab === 'profile'} 

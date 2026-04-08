@@ -39,6 +39,8 @@ interface ChatDetailProps {
     isGroup?: boolean;
     members?: string;
     description?: string;
+    /** UUID do outro utilizador (DM); se definido, a sala de mensagens é wave:public:dm:<uuid> */
+    peerUserId?: string;
   };
   onBack: () => void;
 }
@@ -91,10 +93,11 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const roomKey = useMemo(
-    () => (chat.isGroup ? groupRoomKey(chat.id) : dmRoomKey(chat.id)),
-    [chat.id, chat.isGroup]
-  );
+  const roomKey = useMemo(() => {
+    if (chat.isGroup) return groupRoomKey(chat.id);
+    if (chat.peerUserId) return dmRoomKey(chat.peerUserId);
+    return dmRoomKey(chat.id);
+  }, [chat.id, chat.isGroup, chat.peerUserId]);
 
   const {
     messages: syncedMessages,

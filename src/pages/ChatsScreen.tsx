@@ -116,19 +116,21 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
     }
   };
 
-  const handleNewChatSelect = (contact: any) => {
-    const existingChat = chats.find(c => c.name === contact.name);
+  const handleNewChatSelect = (contact: { id: string; name: string; avatar: string; status?: string }) => {
+    const peerId = contact.id;
+    const existingChat = chats.find((c) => c.peerUserId === peerId || (!c.peerUserId && c.name === contact.name));
     if (existingChat) {
       onChatClick(existingChat);
     } else {
       const newChat = {
-        id: `chat-${Date.now()}`,
+        id: `dm-${peerId}`,
+        peerUserId: peerId,
         name: contact.name,
         avatar: contact.avatar,
         message: 'Inicie uma conversa...',
         time: 'Agora',
         unread: 0,
-        online: true
+        online: true,
       };
       setChats([newChat, ...chats]);
       onChatClick(newChat);

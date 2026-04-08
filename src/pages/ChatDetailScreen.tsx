@@ -27,6 +27,7 @@ import {
 import { supabase } from '../services/supabaseClient';
 import { useChatMessages, type UiMessage } from '../hooks/useChatMessages';
 import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
+import { validateChatMediaFile } from '../lib/mediaChat';
 
 interface ChatDetailProps {
   key?: string;
@@ -101,7 +102,10 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     error: messagesError,
     sendMessage: sendSyncedMessage,
     sendVoiceMessage,
+    sendMediaMessage,
   } = useChatMessages(roomKey, userId);
+
+  const mediaInputRef = useRef<HTMLInputElement>(null);
 
   const [localMessages, setLocalMessages] = useState<UiMessage[]>(() =>
     seedLocalMessages(Boolean(chat.isGroup), null)
@@ -223,6 +227,42 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     const { error: vErr } = await sendVoiceMessage(blob, durationSec);
     if (vErr) alert(vErr);
   }, [useLocalOnly, userId, sendVoiceMessage]);
+
+  const handleMediaFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const validated = await validateChatMediaFile(file);
+    if (validated.ok === false) {
+      alert(validated.error);
+      return;
+    }
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const isVideo = file.type.startsWith('video/');
+
+    const caption = inputText.trim();
+
+    if (useLocalOnly || !userId) {
+      const url = URL.createObjectURL(file);
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id: `local-m-${Date.now()}`,
+          kind: isVideo ? 'video' : 'image',
+          text: caption,
+          time,
+          isMe: true,
+          mediaUrl: url,
+          durationSec: validated.durationSec ?? undefined,
+        },
+      ]);
+      if (caption) setInputText('');
+      return;
+    }
+    const { error: mErr } = await sendMediaMessage(file, caption, validated.durationSec);
+    if (mErr) alert(mErr);
+    else if (caption) setInputText('');
+  };
 
   const cancelVoiceRecord = useCallback(() => {
     if (recordTickRef.current) {
@@ -447,7 +487,7 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
         {messagesError && (
           <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
             Modo local: inicie sessão e execute o SQL do Supabase (tabela <code className="text-brand">chat_messages</code>, bucket{' '}
-            <code className="text-brand">chat-voice</code>) para sincronizar texto e voz.
+            <code className="text-brand">chat-voice</code>, <code className="text-brand">chat-media</code>) e o SQL de mídia.
           </div>
         )}
         {messagesLoading && !useLocalOnly && (
@@ -461,6 +501,24 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
                 <div key={msg.id}>
                   {msg.mediaUrl ? <VoiceBubble msg={msg} /> : (
                     <div className="text-xs text-gray-500 px-2">Áudio indisponível</div>
+                  )}
+                </div>
+              );
+            }
+            if (msg.kind === 'image') {
+              return (
+                <div key={msg.id}>
+                  {msg.mediaUrl ? <ImageBubble msg={msg} /> : (
+                    <div className="text-xs text-gray-500 px-2">Imagem indisponível</div>
+                  )}
+                </div>
+              );
+            }
+            if (msg.kind === 'video') {
+              return (
+                <div key={msg.id}>
+                  {msg.mediaUrl ? <VideoBubble msg={msg} /> : (
+                    <div className="text-xs text-gray-500 px-2">Vídeo indisponível</div>
                   )}
                 </div>
               );
@@ -504,6 +562,13 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
           </div>
         ) : (
           <div className="flex items-center gap-2">
+            <input
+              ref={mediaInputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={(ev) => void handleMediaFile(ev)}
+            />
             <div className="flex-1 flex items-center gap-2 bg-white/5 rounded-2xl px-3 py-2 border border-white/10 focus-within:border-brand/40 focus-within:bg-white/10 transition-all min-w-0">
               <button type="button" className="text-gray-400 hover:text-brand transition-colors shrink-0">
                 <Smile size={22} />
@@ -516,7 +581,12 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
                 placeholder="Mensagem"
                 className="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-2 placeholder:text-gray-500"
               />
-              <button type="button" className="text-gray-400 hover:text-brand transition-colors shrink-0">
+              <button
+                type="button"
+                title="Foto ou vídeo curto"
+                onClick={() => mediaInputRef.current?.click()}
+                className="text-gray-400 hover:text-brand transition-colors shrink-0"
+              >
                 <Paperclip size={22} />
               </button>
             </div>
@@ -838,6 +908,71 @@ function formatVoiceDuration(sec: number) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return m > 0 ? `${m}:${r.toString().padStart(2, '0')}` : `0:${r.toString().padStart(2, '0')}`;
+}
+
+function ImageBubble({ msg }: { msg: UiMessage }) {
+  if (!msg.mediaUrl) return null;
+  return (
+    <div className={cn('flex flex-col max-w-[85%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <div
+        className={cn(
+          'rounded-[22px] overflow-hidden shadow-xl border max-w-[min(280px,85vw)]',
+          msg.isMe ? 'border-brand/30 rounded-tr-none' : 'border-white/10 rounded-tl-none'
+        )}
+      >
+        <img src={msg.mediaUrl} alt="" className="w-full h-auto object-cover max-h-72 block" referrerPolicy="no-referrer" />
+      </div>
+      {msg.text ? (
+        <p className={cn('mt-1.5 px-1 text-sm', msg.isMe ? 'text-brand/90 text-right' : 'text-gray-300')}>{msg.text}</p>
+      ) : null}
+      <div className="flex items-center gap-2 mt-1 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.isMe && (
+          <div className="flex -space-x-1 opacity-80">
+            <span className="text-brand text-[10px] font-black">✓</span>
+            <span className="text-brand text-[10px] font-black">✓</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VideoBubble({ msg }: { msg: UiMessage }) {
+  if (!msg.mediaUrl) return null;
+  return (
+    <div className={cn('flex flex-col max-w-[85%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <div
+        className={cn(
+          'rounded-[22px] overflow-hidden shadow-xl border bg-black max-w-[min(280px,85vw)]',
+          msg.isMe ? 'border-brand/30 rounded-tr-none' : 'border-white/10 rounded-tl-none'
+        )}
+      >
+        <video
+          src={msg.mediaUrl}
+          controls
+          playsInline
+          className="w-full max-h-64 object-contain bg-black"
+          preload="metadata"
+        />
+      </div>
+      {msg.text ? (
+        <p className={cn('mt-1.5 px-1 text-sm', msg.isMe ? 'text-brand/90 text-right' : 'text-gray-300')}>{msg.text}</p>
+      ) : null}
+      <div className="flex items-center gap-2 mt-1 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.durationSec != null && msg.durationSec > 0 && (
+          <span className="text-[10px] text-gray-600">{formatVoiceDuration(msg.durationSec)}</span>
+        )}
+        {msg.isMe && (
+          <div className="flex -space-x-1 opacity-80">
+            <span className="text-brand text-[10px] font-black">✓</span>
+            <span className="text-brand text-[10px] font-black">✓</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function VoiceBubble({ msg }: { msg: UiMessage }) {

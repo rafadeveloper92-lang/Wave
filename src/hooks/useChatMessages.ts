@@ -15,7 +15,7 @@ export type ChatMessageRow = {
 
 export type UiMessage = {
   id: string;
-  kind: 'text' | 'voice';
+  kind: 'text' | 'voice' | 'image' | 'video';
   text: string;
   time: string;
   isMe: boolean;
@@ -24,6 +24,7 @@ export type UiMessage = {
 };
 
 const VOICE_BUCKET = 'chat-voice';
+const MEDIA_BUCKET = 'chat-media';
 
 function formatTime(iso: string) {
   try {
@@ -33,22 +34,68 @@ function formatTime(iso: string) {
   }
 }
 
+function publicUrl(bucket: string, path: string) {
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  return data.publicUrl;
+}
+
 function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
-  const isVoice = row.message_type === 'voice' && row.media_path;
+  const mt = row.message_type || 'text';
   let mediaUrl: string | undefined;
-  if (isVoice && row.media_path) {
-    const { data } = supabase.storage.from(VOICE_BUCKET).getPublicUrl(row.media_path);
-    mediaUrl = data.publicUrl;
+  if (row.media_path) {
+    if (mt === 'voice') mediaUrl = publicUrl(VOICE_BUCKET, row.media_path);
+    else if (mt === 'image' || mt === 'video') mediaUrl = publicUrl(MEDIA_BUCKET, row.media_path);
+  }
+
+  if (mt === 'voice' && row.media_path) {
+    return {
+      id: row.id,
+      kind: 'voice',
+      text: '',
+      time: formatTime(row.created_at),
+      isMe: currentUserId != null && row.sender_id === currentUserId,
+      mediaUrl,
+      durationSec: row.duration_sec ?? undefined,
+    };
+  }
+  if (mt === 'image' && row.media_path) {
+    return {
+      id: row.id,
+      kind: 'image',
+      text: row.body || '',
+      time: formatTime(row.created_at),
+      isMe: currentUserId != null && row.sender_id === currentUserId,
+      mediaUrl,
+    };
+  }
+  if (mt === 'video' && row.media_path) {
+    return {
+      id: row.id,
+      kind: 'video',
+      text: row.body || '',
+      time: formatTime(row.created_at),
+      isMe: currentUserId != null && row.sender_id === currentUserId,
+      mediaUrl,
+      durationSec: row.duration_sec ?? undefined,
+    };
   }
   return {
     id: row.id,
-    kind: isVoice ? 'voice' : 'text',
-    text: isVoice ? '' : row.body,
+    kind: 'text',
+    text: row.body,
     time: formatTime(row.created_at),
     isMe: currentUserId != null && row.sender_id === currentUserId,
-    mediaUrl,
-    durationSec: row.duration_sec ?? undefined,
   };
+}
+
+function extForMime(mime: string): string {
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('gif')) return 'gif';
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+  if (mime.includes('webm')) return 'webm';
+  if (mime.includes('quicktime')) return 'mov';
+  return 'mp4';
 }
 
 export function useChatMessages(roomKey: string | null, currentUserId: string | null) {
@@ -166,6 +213,52 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
     [roomKey, currentUserId]
   );
 
+  const sendMediaMessage = useCallback(
+    async (file: File, caption: string, durationSec: number | null) => {
+      if (!roomKey || !currentUserId) return { error: 'Sessão ou sala inválida' };
+
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
+      if (userErr || !user) return { error: 'Inicie sessão para enviar mídia.' };
+
+      const isImage = file.type.startsWith('image/');
+      const isVideo = file.type.startsWith('video/');
+      if (!isImage && !isVideo) return { error: 'Ficheiro inválido' };
+
+      const messageType = isImage ? 'image' : 'video';
+      const ext = extForMime(file.type);
+      const path = `${user.id}/${safeStorageSegment(roomKey)}/${crypto.randomUUID()}.${ext}`;
+
+      const { error: upErr } = await supabase.storage.from(MEDIA_BUCKET).upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+      if (upErr) return { error: upErr.message };
+
+      const cap = caption.trim().slice(0, 2000);
+      const insertRow: Record<string, unknown> = {
+        room_key: roomKey,
+        sender_id: currentUserId,
+        body: cap,
+        message_type: messageType,
+        media_path: path,
+      };
+      if (isVideo && durationSec != null) {
+        insertRow.duration_sec = Math.min(120, Math.max(1, Math.round(durationSec)));
+      }
+
+      const { error: insErr } = await supabase.from('chat_messages').insert(insertRow);
+      if (insErr) {
+        void supabase.storage.from(MEDIA_BUCKET).remove([path]);
+        return { error: insErr.message };
+      }
+      return { error: null as string | null };
+    },
+    [roomKey, currentUserId]
+  );
+
   return {
     messages: mapToUi(rows),
     loading,
@@ -173,5 +266,6 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
     refetch: fetchMessages,
     sendMessage,
     sendVoiceMessage,
+    sendMediaMessage,
   };
 }

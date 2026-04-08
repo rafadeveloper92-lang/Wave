@@ -1,10 +1,10 @@
 import { createBrowserClient } from "@supabase/ssr";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = 'https://hhgecmtljovgoqbcqleb.supabase.co';
+const supabaseKey = 'sb_publishable_KR3obEpqz9WJZXWwUVS5xw_iq_rVUAy';
 
 export const createClient = () =>
   createBrowserClient(
-    supabaseUrl!,
-    supabaseKey!,
+    supabaseUrl,
+    supabaseKey,
   );

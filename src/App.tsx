@@ -85,10 +85,10 @@ export default function App() {
         )}
       </AnimatePresence>
       {/* Top Bar */}
-      <header className="px-6 py-8 flex justify-between items-center bg-gradient-to-b from-[#064e3b] to-[#020617] sticky top-0 z-50">
-        <div className="flex items-center gap-3">
+      <header className="px-5 py-5 flex justify-between items-center bg-gradient-to-b from-[#064e3b] to-[#020617] sticky top-0 z-50">
+        <div className="flex items-center gap-2">
           <div className="relative flex items-center justify-center">
-            <svg width="48" height="48" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_0_12px_rgba(45,212,191,0.6)]">
+            <svg width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_0_8px_rgba(45,212,191,0.6)]">
               <defs>
                 <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stopColor="#2dd4bf" />
@@ -126,18 +126,18 @@ export default function App() {
               />
             </svg>
           </div>
-          <h1 className="text-4xl font-black tracking-tighter text-white drop-shadow-md">Wave</h1>
+          <h1 className="text-2xl font-black tracking-tighter text-white drop-shadow-md">Wave</h1>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-0.5">
-            <button className="p-2.5 hover:bg-white/10 rounded-full transition-colors text-white">
-              <Search size={28} strokeWidth={2.5} />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-0">
+            <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-white">
+              <Search size={24} strokeWidth={2.5} />
             </button>
-            <button className="p-2.5 hover:bg-white/10 rounded-full transition-colors relative text-white">
-              <Bell size={28} strokeWidth={2.5} />
+            <button className="p-2 hover:bg-white/10 rounded-full transition-colors relative text-white">
+              <Bell size={24} strokeWidth={2.5} />
             </button>
           </div>
-          <div className="w-12 h-12 rounded-full border-2 border-brand p-0.5 shadow-[0_0_15px_rgba(45,212,191,0.3)]">
+          <div className="w-10 h-10 rounded-full border-2 border-brand p-0.5 shadow-[0_0_10px_rgba(45,212,191,0.3)]">
             <img 
               src="https://i.pravatar.cc/150?u=me" 
               alt="Me" 
@@ -154,41 +154,41 @@ export default function App() {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-[#020617]/80 backdrop-blur-3xl border-t border-white/5 px-6 py-5 flex justify-between items-center z-50">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-[#020617]/80 backdrop-blur-3xl border-t border-white/5 px-5 py-3 flex justify-between items-center z-50">
         <NavButton 
           active={activeTab === 'chats'} 
           onClick={() => setActiveTab('chats')} 
-          icon={<MessageSquare size={28} strokeWidth={2.5} />} 
+          icon={<MessageSquare size={24} strokeWidth={2.5} />} 
           label="Chats" 
         />
         <NavButton 
           active={activeTab === 'reels'} 
           onClick={() => setActiveTab('reels')} 
-          icon={<Play size={28} strokeWidth={2.5} />} 
+          icon={<Play size={24} strokeWidth={2.5} />} 
           label="Reels" 
         />
         <NavButton 
           active={activeTab === 'groups'} 
           onClick={() => setActiveTab('groups')} 
-          icon={<Users size={28} strokeWidth={2.5} />} 
+          icon={<Users size={24} strokeWidth={2.5} />} 
           label="Groups" 
         />
         <NavButton 
           active={activeTab === 'discover'} 
           onClick={() => setActiveTab('discover')} 
-          icon={<Compass size={28} strokeWidth={2.5} />} 
+          icon={<Compass size={24} strokeWidth={2.5} />} 
           label="Discover" 
         />
         <NavButton 
           active={activeTab === 'todos'} 
           onClick={() => setActiveTab('todos')} 
-          icon={<Plus size={28} strokeWidth={2.5} />} 
+          icon={<Plus size={24} strokeWidth={2.5} />} 
           label="Todos" 
         />
         <NavButton 
           active={activeTab === 'profile'} 
           onClick={() => setActiveTab('profile')} 
-          icon={<UserIcon size={28} strokeWidth={2.5} />} 
+          icon={<UserIcon size={24} strokeWidth={2.5} />} 
           label="Profile" 
         />
       </nav>

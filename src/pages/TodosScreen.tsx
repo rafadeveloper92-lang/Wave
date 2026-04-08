@@ -27,6 +27,7 @@ export default function TodosScreen() {
 
     if (error) {
       console.error('Error fetching todos:', error);
+      alert('Erro ao buscar dados: ' + error.message);
     } else {
       setTodos(data || []);
     }
@@ -44,6 +45,7 @@ export default function TodosScreen() {
 
     if (error) {
       console.error('Error adding todo:', error);
+      alert('Erro ao adicionar: ' + error.message);
     } else if (data) {
       setTodos([...todos, data[0]]);
       setNewTodo('');
@@ -80,28 +82,28 @@ export default function TodosScreen() {
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="p-6 pb-24 max-w-2xl mx-auto"
+      className="p-4 pb-24 max-w-2xl mx-auto"
     >
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-3xl font-black text-white tracking-tighter">Supabase Todos</h2>
-        <div className="px-3 py-1 bg-brand/10 text-brand text-[10px] font-black uppercase tracking-widest rounded-full border border-brand/20">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-black text-white tracking-tighter">Supabase Todos</h2>
+        <div className="px-2 py-0.5 bg-brand/10 text-brand text-[8px] font-black uppercase tracking-widest rounded-full border border-brand/20">
           Live Sync
         </div>
       </div>
 
-      <form onSubmit={addTodo} className="mb-8 flex gap-3">
+      <form onSubmit={addTodo} className="mb-6 flex gap-2">
         <input
           type="text"
           value={newTodo}
           onChange={(e) => setNewTodo(e.target.value)}
           placeholder="O que precisa ser feito?"
-          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-white placeholder:text-gray-500 focus:outline-none focus:border-brand/50 transition-colors"
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand/50 transition-colors"
         />
         <button 
           type="submit"
-          className="bg-brand text-black p-4 rounded-2xl shadow-lg shadow-brand/20 active:scale-95 transition-all"
+          className="bg-brand text-black p-3 rounded-xl shadow-lg shadow-brand/20 active:scale-95 transition-all"
         >
-          <Plus size={24} strokeWidth={3} />
+          <Plus size={20} strokeWidth={3} />
         </button>
       </form>
 
@@ -122,22 +124,22 @@ export default function TodosScreen() {
                 layout
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                className="flex items-center gap-4 bg-white/5 border border-white/10 p-5 rounded-[24px] group hover:bg-white/[0.07] transition-all"
+                className="flex items-center gap-3 bg-white/5 border border-white/10 p-4 rounded-[16px] group hover:bg-white/[0.07] transition-all"
               >
                 <button 
                   onClick={() => toggleTodo(todo.id, todo.is_completed)}
                   className={todo.is_completed ? "text-brand" : "text-gray-500"}
                 >
-                  {todo.is_completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}
+                  {todo.is_completed ? <CheckCircle2 size={20} /> : <Circle size={20} />}
                 </button>
-                <span className={`flex-1 font-medium text-lg ${todo.is_completed ? 'text-gray-500 line-through' : 'text-white'}`}>
+                <span className={`flex-1 font-medium text-base ${todo.is_completed ? 'text-gray-500 line-through' : 'text-white'}`}>
                   {todo.name}
                 </span>
                 <button 
                   onClick={() => deleteTodo(todo.id)}
                   className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
                 >
-                  <Trash2 size={20} />
+                  <Trash2 size={18} />
                 </button>
               </motion.div>
             ))

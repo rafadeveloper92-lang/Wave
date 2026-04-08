@@ -1,15 +1,16 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Heart, MessageCircle, Share2, Music, UserPlus, MoreVertical, Volume2, VolumeX, Camera } from 'lucide-react';
+import { Heart, MessageCircle, Share2, Music, UserPlus, MoreVertical, Volume2, VolumeX, Camera, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { supabase } from '../services/supabaseClient';
 
-const reelsData = [
+const mockReels = [
   {
     id: 'reel-1',
     user: { name: 'lucas_silva', avatar: 'https://i.pravatar.cc/150?u=lucas' },
     description: 'Vibe de hoje! 🌊 #praia #verao #wave',
     music: 'Matuê - Vampiro',
-    video: 'https://picsum.photos/seed/beach_reel/1080/1920',
+    video: 'https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-ocean-near-the-shore-4302-large.mp4',
     likes: '125K',
     comments: '1.2K',
     shares: '45K'
@@ -19,37 +20,58 @@ const reelsData = [
     user: { name: 'ana_clara', avatar: 'https://i.pravatar.cc/150?u=ana' },
     description: 'Aquela resenha com os amigos! 🍻 #resenha #amigos',
     music: 'Simone Mendes - Erro Gostoso',
-    video: 'https://picsum.photos/seed/party_reel/1080/1920',
+    video: 'https://assets.mixkit.co/videos/preview/mixkit-girl-in-neon-light-dancing-40150-large.mp4',
     likes: '89K',
     comments: '850',
     shares: '12K'
-  },
-  {
-    id: 'reel-3',
-    user: { name: 'dj_topo', avatar: 'https://i.pravatar.cc/150?u=topo' },
-    description: 'Novo set saindo! 🔥 #funk #dj #topo',
-    music: 'DJ Topo - MTG Quero Te Encontrar',
-    video: 'https://picsum.photos/seed/dj_reel/1080/1920',
-    likes: '210K',
-    comments: '3.4K',
-    shares: '98K'
-  },
-  {
-    id: 'reel-4',
-    user: { name: 'marilia_fã', avatar: 'https://i.pravatar.cc/150?u=marilia' },
-    description: 'Eterna Rainha! 👑 #mariliamendonca #sertanejo',
-    music: 'Marília Mendonça - Leão',
-    video: 'https://picsum.photos/seed/concert_reel/1080/1920',
-    likes: '500K',
-    comments: '15K',
-    shares: '120K'
   }
 ];
 
 export default function ReelsScreen({ onProfileClick }: { onProfileClick?: (user: any) => void }) {
+  const [reels, setReels] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [likedReels, setLikedReels] = useState<Set<string>>(new Set());
   const [followingUsers, setFollowingUsers] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetchReels();
+  }, []);
+
+  const fetchReels = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('reels')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        // Formata os dados do Supabase para o formato do componente
+        const formattedReels = data.map(item => ({
+          id: item.id,
+          user: { name: item.user_name, avatar: item.user_avatar || `https://i.pravatar.cc/150?u=${item.user_name}` },
+          description: item.description,
+          music: item.music_name,
+          video: item.video_url,
+          likes: item.likes_count,
+          comments: item.comments_count,
+          shares: item.shares_count
+        }));
+        setReels(formattedReels);
+      } else {
+        // Se não houver dados no Supabase, usa os mocks
+        setReels(mockReels);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar reels:', err);
+      setReels(mockReels);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const toggleLike = (id: string) => {
     const newLiked = new Set(likedReels);
@@ -65,9 +87,18 @@ export default function ReelsScreen({ onProfileClick }: { onProfileClick?: (user
     setFollowingUsers(newFollowing);
   };
 
+  if (loading) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center bg-black text-white gap-4">
+        <Loader2 className="w-10 h-10 text-brand animate-spin" />
+        <p className="text-sm font-medium animate-pulse">Carregando Reels...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full w-full overflow-y-scroll snap-y snap-mandatory no-scrollbar bg-black relative">
-      {reelsData.map((reel) => (
+      {reels.map((reel) => (
         <ReelItem 
           key={reel.id} 
           reel={reel} 
@@ -86,7 +117,7 @@ export default function ReelsScreen({ onProfileClick }: { onProfileClick?: (user
 
 function ReelItem({ reel, isMuted, onToggleMute, isLiked, onToggleLike, isFollowing, onToggleFollow, onProfileClick }: { 
   key?: string,
-  reel: typeof reelsData[0], 
+  reel: any, 
   isMuted: boolean, 
   onToggleMute: () => void,
   isLiked: boolean,
@@ -96,6 +127,35 @@ function ReelItem({ reel, isMuted, onToggleMute, isLiked, onToggleLike, isFollow
   onProfileClick: () => void
 }) {
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const options = {
+      root: null,
+      rootMargin: '0px',
+      threshold: 0.7
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          videoRef.current?.play().catch(() => {});
+        } else {
+          videoRef.current?.pause();
+        }
+      });
+    }, options);
+
+    if (videoRef.current) {
+      observer.observe(videoRef.current);
+    }
+
+    return () => {
+      if (videoRef.current) {
+        observer.unobserve(videoRef.current);
+      }
+    };
+  }, []);
 
   const handleDoubleTap = () => {
     if (!isLiked) onToggleLike();
@@ -105,16 +165,19 @@ function ReelItem({ reel, isMuted, onToggleMute, isLiked, onToggleLike, isFollow
 
   return (
     <div className="h-full w-full snap-start relative flex flex-col justify-end">
-      {/* Video Background (Placeholder Image) */}
+      {/* Video Background */}
       <div 
-        className="absolute inset-0 z-0"
+        className="absolute inset-0 z-0 bg-black"
         onDoubleClick={handleDoubleTap}
+        onClick={onToggleMute}
       >
-        <img 
+        <video 
+          ref={videoRef}
           src={reel.video} 
-          alt="" 
           className="w-full h-full object-cover"
-          referrerPolicy="no-referrer"
+          loop
+          muted={isMuted}
+          playsInline
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60" />
       </div>

@@ -175,27 +175,27 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="px-6 space-y-6 relative pb-24"
+      className="px-5 space-y-5 relative pb-24"
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Chats</h2>
+        <h2 className="text-xl font-bold">Chats</h2>
         <button 
           onClick={() => setShowNewChat(true)}
-          className="p-2 bg-brand/10 text-brand rounded-xl hover:bg-brand/20 transition-all"
+          className="p-1.5 bg-brand/10 text-brand rounded-lg hover:bg-brand/20 transition-all"
         >
-          <Plus size={20} />
+          <Plus size={18} />
         </button>
       </div>
 
       {/* Search */}
       <div className="relative">
-        <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
+        <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
         <input 
           type="text" 
           placeholder="Pesquisar conversas..." 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-brand/50 transition-all"
+          className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-11 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-brand/50 transition-all"
         />
       </div>
 
@@ -226,7 +226,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                   }
                 }}
                 className={cn(
-                  "w-16 h-16 rounded-full p-0.5 border-2 transition-all",
+                  "w-14 h-14 rounded-full p-0.5 border-2 transition-all",
                   myStatuses.length > 0 ? "border-brand" : "border-dashed border-gray-600"
                 )}
               >
@@ -242,12 +242,12 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                   e.stopPropagation();
                   fileInputRef.current?.click();
                 }}
-                className="absolute bottom-0 right-0 bg-brand text-[#020617] rounded-full p-1 border-2 border-[#020617] hover:scale-110 transition-transform"
+                className="absolute bottom-0 right-0 bg-brand text-[#020617] rounded-full p-0.5 border-2 border-[#020617] hover:scale-110 transition-transform"
               >
-                <Plus size={12} strokeWidth={3} />
+                <Plus size={10} strokeWidth={3} />
               </button>
             </div>
-            <span className="text-[10px] font-medium text-gray-400">Meu Status</span>
+            <span className="text-[9px] font-medium text-gray-400">Meu Status</span>
           </div>
 
           {/* Friends Status */}
@@ -259,9 +259,9 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                 avatar: status.avatar,
                 items: status.items
               })}
-              className="flex flex-col items-center gap-2 min-w-[70px]"
+              className="flex flex-col items-center gap-1.5 min-w-[60px]"
             >
-              <div className="w-16 h-16 rounded-full p-0.5 border-2 border-brand">
+              <div className="w-14 h-14 rounded-full p-0.5 border-2 border-brand">
                 <img 
                   src={status.avatar} 
                   alt={status.name} 
@@ -269,7 +269,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                   referrerPolicy="no-referrer"
                 />
               </div>
-              <span className="text-[10px] font-medium text-gray-400 truncate w-full text-center">{status.name.split(' ')[0]}</span>
+              <span className="text-[9px] font-medium text-gray-400 truncate w-full text-center">{status.name.split(' ')[0]}</span>
             </button>
           ))}
         </div>
@@ -286,7 +286,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
             onTouchMove={handleMove}
             onTouchEnd={() => handleEnd(chat)}
             className={cn(
-              "flex items-center gap-4 group cursor-pointer transition-all duration-200 p-2 -mx-2 rounded-2xl",
+              "flex items-center gap-3 group cursor-pointer transition-all duration-200 p-1.5 -mx-1.5 rounded-xl",
               selectedChat?.id === chat.id ? "bg-white/10 scale-[0.98]" : "hover:bg-white/5"
             )}
           >
@@ -294,30 +294,30 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
               <img 
                 src={chat.avatar} 
                 alt={chat.name} 
-                className="w-14 h-14 rounded-full object-cover border-2 border-transparent group-hover:border-brand transition-all"
+                className="w-12 h-12 rounded-full object-cover border-2 border-transparent group-hover:border-brand transition-all"
                 referrerPolicy="no-referrer"
               />
               {chat.online && (
-                <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-brand border-2 border-[#020617] rounded-full"></span>
+                <span className="absolute bottom-0.5 right-0.5 w-3 h-3 bg-brand border-2 border-[#020617] rounded-full"></span>
               )}
               {lockedChats[chat.id] && (
-                <div className="absolute -top-1 -left-1 bg-red-500 text-white p-1 rounded-lg border border-[#020617] shadow-lg">
-                  <Lock size={10} />
+                <div className="absolute -top-1 -left-1 bg-red-500 text-white p-0.5 rounded-md border border-[#020617] shadow-lg">
+                  <Lock size={8} />
                 </div>
               )}
             </div>
-            <div className="flex-1 min-w-0 border-b border-white/5 pb-4">
-              <div className="flex justify-between items-center mb-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-semibold text-lg truncate">{chat.name}</h3>
-                  {lockedChats[chat.id] && <Lock size={12} className="text-red-500" />}
+            <div className="flex-1 min-w-0 border-b border-white/5 pb-3">
+              <div className="flex justify-between items-center mb-0.5">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-semibold text-base truncate">{chat.name}</h3>
+                  {lockedChats[chat.id] && <Lock size={10} className="text-red-500" />}
                 </div>
-                <span className="text-xs text-gray-500">{chat.time}</span>
+                <span className="text-[10px] text-gray-500">{chat.time}</span>
               </div>
               <div className="flex justify-between items-center">
-                <p className="text-sm text-gray-400 truncate pr-4">{chat.message}</p>
+                <p className="text-xs text-gray-400 truncate pr-4">{chat.message}</p>
                 {chat.unread > 0 && (
-                  <span className="bg-brand text-[#020617] text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full">
+                  <span className="bg-brand text-[#020617] text-[9px] font-bold w-4.5 h-4.5 flex items-center justify-center rounded-full">
                     {chat.unread}
                   </span>
                 )}

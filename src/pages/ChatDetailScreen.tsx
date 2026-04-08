@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Phone, Video, MoreVertical, Send, Smile, Paperclip, User, Image, Search, BellOff, Wallpaper, Trash2, Eraser, AlertCircle, MessageSquare, ChevronRight, Star, Shield } from 'lucide-react';
+import CallOverlay from '../components/CallOverlay';
+import { useWebRtcCall } from '../hooks/useWebRtcCall';
 
 interface Message {
   id: string;
@@ -43,6 +45,11 @@ const ROLE_CONFIG = {
 };
 
 export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
+  const signalingEnabled = Boolean(
+    import.meta.env.VITE_SUPABASE_URL?.trim() && import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+  );
+  const rtc = useWebRtcCall(chat.id, { enabled: signalingEnabled, isGroup: Boolean(chat.isGroup) });
+
   const [showInfo, setShowInfo] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -116,6 +123,9 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     onBack();
   };
 
+  const callUiActive = rtc.phase !== 'idle';
+  const canStartCall = !chat.isGroup && signalingEnabled;
+
   return (
     <motion.div 
       initial={{ x: '100%' }}
@@ -124,6 +134,23 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
       className="absolute inset-0 bg-[#020617] flex flex-col z-[100]"
     >
+      <CallOverlay
+        visible={callUiActive}
+        phase={rtc.phase}
+        kind={rtc.callKind}
+        peerName={chat.name}
+        peerAvatar={chat.avatar}
+        localStream={rtc.localStream}
+        remoteStream={rtc.remoteStream}
+        isMuted={rtc.isMuted}
+        error={rtc.error}
+        onAccept={rtc.acceptCall}
+        onReject={rtc.rejectCall}
+        onEnd={rtc.endCall}
+        onToggleMute={rtc.toggleMute}
+        onDismissError={rtc.clearError}
+      />
+
       <AnimatePresence>
         {showInfo && (
           <ChatInfoScreen 
@@ -149,6 +176,10 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
             currentUserRole={currentUserRole}
             onPromote={handlePromote}
             onBan={handleBan}
+            canStartCall={canStartCall}
+            callActive={callUiActive}
+            onVoiceCall={() => void rtc.startCall('audio')}
+            onVideoCall={() => void rtc.startCall('video')}
           />
         )}
         {showMenu && (
@@ -228,8 +259,30 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Video size={20} /></button>
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Phone size={20} /></button>
+          <button
+            type="button"
+            title={canStartCall ? 'Chamada de vídeo' : chat.isGroup ? 'Chamadas em grupo em breve' : 'Configure Supabase para chamadas'}
+            disabled={!canStartCall || callUiActive}
+            onClick={() => void rtc.startCall('video')}
+            className={cn(
+              'p-2 rounded-full transition-colors',
+              canStartCall && !callUiActive ? 'hover:bg-white/10 text-gray-400' : 'text-gray-600 opacity-50 cursor-not-allowed'
+            )}
+          >
+            <Video size={20} />
+          </button>
+          <button
+            type="button"
+            title={canStartCall ? 'Chamada de voz' : chat.isGroup ? 'Chamadas em grupo em breve' : 'Configure Supabase para chamadas'}
+            disabled={!canStartCall || callUiActive}
+            onClick={() => void rtc.startCall('audio')}
+            className={cn(
+              'p-2 rounded-full transition-colors',
+              canStartCall && !callUiActive ? 'hover:bg-white/10 text-gray-400' : 'text-gray-600 opacity-50 cursor-not-allowed'
+            )}
+          >
+            <Phone size={20} />
+          </button>
           <button 
             onClick={() => setShowMenu(!showMenu)}
             className={cn("p-2 rounded-full transition-colors", showMenu ? "bg-brand/20 text-brand" : "hover:bg-white/10 text-gray-400")}
@@ -326,14 +379,22 @@ function MemberProfileScreen({
   onBack, 
   currentUserRole,
   onPromote,
-  onBan
+  onBan,
+  canStartCall,
+  callActive,
+  onVoiceCall,
+  onVideoCall,
 }: { 
   key?: string,
   member: Member, 
   onBack: () => void, 
   currentUserRole: GroupRole,
   onPromote: (id: string, role: GroupRole) => void,
-  onBan: (id: string) => void
+  onBan: (id: string) => void,
+  canStartCall?: boolean,
+  callActive?: boolean,
+  onVoiceCall?: () => void,
+  onVideoCall?: () => void,
 }) {
   const currentPriority = ROLE_CONFIG[currentUserRole].priority;
   const targetPriority = ROLE_CONFIG[member.role].priority;
@@ -382,8 +443,20 @@ function MemberProfileScreen({
 
         <div className="flex justify-center gap-4 w-full px-4">
           <ProfileActionButton icon={<MessageSquare size={20} />} label="Mensagem" />
-          <ProfileActionButton icon={<Phone size={20} />} label="Voz" />
-          <ProfileActionButton icon={<Video size={20} />} label="Vídeo" />
+          <ProfileActionButton
+            icon={<Phone size={20} />}
+            label="Voz"
+            disabled={!canStartCall || callActive}
+            onClick={onVoiceCall}
+            title={canStartCall ? 'Chamada de voz' : 'Indisponível'}
+          />
+          <ProfileActionButton
+            icon={<Video size={20} />}
+            label="Vídeo"
+            disabled={!canStartCall || callActive}
+            onClick={onVideoCall}
+            title={canStartCall ? 'Chamada de vídeo' : 'Indisponível'}
+          />
           <ProfileActionButton icon={<Search size={20} />} label="Pesquisar" />
         </div>
       </div>
@@ -515,9 +588,30 @@ function MemberProfileScreen({
   );
 }
 
-function ProfileActionButton({ icon, label }: { icon: React.ReactNode, label: string }) {
+function ProfileActionButton({
+  icon,
+  label,
+  onClick,
+  disabled,
+  title,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
-    <button className="flex-1 flex flex-col items-center gap-2 p-3 glass rounded-2xl hover:bg-white/10 transition-all">
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex-1 flex flex-col items-center gap-2 p-3 glass rounded-2xl transition-all',
+        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'
+      )}
+    >
       <div className="text-brand">{icon}</div>
       <span className="text-[10px] font-bold text-brand uppercase tracking-wider">{label}</span>
     </button>

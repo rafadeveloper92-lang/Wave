@@ -1,51 +1,34 @@
 import { useEffect, useRef } from 'react';
 
+function defaultRingUrl() {
+  const base = import.meta.env.BASE_URL;
+  return base.endsWith('/') ? `${base}sounds/incoming-call.mp3` : `${base}/sounds/incoming-call.mp3`;
+}
+
 /**
- * Toque + vibração estilo chamada recebida enquanto `active` (fase incoming).
- * Usa Web Audio (sem ficheiro externo). Em alguns browsers o som só funciona após gesto do utilizador.
+ * Toque de chamada recebida: ficheiro de áudio em loop + vibração.
+ * `VITE_RING_SOUND_URL` substitui o ficheiro em `public/sounds/incoming-call.mp3`.
+ * Em alguns browsers o som só inicia após uma interação do utilizador (autoplay).
  */
 export function useIncomingCallRing(active: boolean) {
-  const ctxRef = useRef<AudioContext | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const vibrateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!active) return;
 
-    const playRingPulse = () => {
-      try {
-        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!Ctx) return;
-        if (!ctxRef.current) ctxRef.current = new Ctx();
-        const ctx = ctxRef.current;
-        void ctx.resume();
+    const src = import.meta.env.VITE_RING_SOUND_URL?.trim() || defaultRingUrl();
+    const audio = new Audio(src);
+    audio.loop = true;
+    audio.volume = 0.85;
+    audioRef.current = audio;
 
-        const ringOnce = (freq: number, start: number, dur: number) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.value = freq;
-          gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
-          gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + start + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(ctx.currentTime + start);
-          osc.stop(ctx.currentTime + start + dur + 0.05);
-        };
-
-        const t = ctx.currentTime;
-        ringOnce(440, 0, 0.18);
-        ringOnce(550, 0.22, 0.18);
-        ringOnce(440, 0.48, 0.18);
-        ringOnce(550, 0.7, 0.18);
-      } catch {
-        /* autoplay ou contexto indisponível */
-      }
+    const play = () => {
+      void audio.play().catch(() => {
+        /* autoplay bloqueado até haver gesto */
+      });
     };
-
-    playRingPulse();
-    intervalRef.current = setInterval(playRingPulse, 2200);
+    play();
 
     const buzz = () => {
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -56,8 +39,9 @@ export function useIncomingCallRing(active: boolean) {
     vibrateIntervalRef.current = setInterval(buzz, 2500);
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = null;
+      audio.pause();
+      audio.src = '';
+      audioRef.current = null;
       if (vibrateIntervalRef.current) clearInterval(vibrateIntervalRef.current);
       vibrateIntervalRef.current = null;
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(0);

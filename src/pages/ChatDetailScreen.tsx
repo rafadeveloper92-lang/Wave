@@ -23,11 +23,13 @@ import {
   Mic,
   Play,
   Pause,
+  MapPin,
 } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { useChatMessages, type UiMessage } from '../hooks/useChatMessages';
 import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
 import { validateChatMediaFile } from '../lib/mediaChat';
+import { blockUser } from '../lib/chatPreferences';
 
 interface ChatDetailProps {
   key?: string;
@@ -106,6 +108,7 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     sendMessage: sendSyncedMessage,
     sendVoiceMessage,
     sendMediaMessage,
+    sendLocationMessage,
   } = useChatMessages(roomKey, userId);
 
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -353,6 +356,39 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     onBack();
   };
 
+  const shareLocation = useCallback(async () => {
+    if (!navigator.geolocation) {
+      alert('Geolocalização não disponível neste dispositivo.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const label = 'A minha localização';
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (useLocalOnly || !userId) {
+          setLocalMessages((prev) => [
+            ...prev,
+            {
+              id: `loc-${Date.now()}`,
+              kind: 'location',
+              text: label,
+              time,
+              isMe: true,
+              location: { lat, lng, label },
+            },
+          ]);
+          return;
+        }
+        const { error: locErr } = await sendLocationMessage(lat, lng, label);
+        if (locErr) alert(locErr);
+      },
+      () => alert('Permissão de localização negada ou indisponível.'),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
+    );
+  }, [useLocalOnly, userId, sendLocationMessage]);
+
   return (
     <motion.div 
       initial={{ x: '100%' }}
@@ -376,6 +412,17 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
             setOnlyAdminsCanEditInfo={setOnlyAdminsCanEditInfo}
             ephemeralMessages={ephemeralMessages}
             setEphemeralMessages={setEphemeralMessages}
+            showBlockContact={!chat.isGroup && Boolean(chat.peerUserId)}
+            onBlockContact={() => {
+              if (chat.peerUserId) {
+                blockUser(chat.peerUserId, chat.name);
+                window.dispatchEvent(
+                  new CustomEvent('wave-user-blocked', { detail: { peerUserId: chat.peerUserId } })
+                );
+                setShowInfo(false);
+                onBack();
+              }
+            }}
           />
         )}
         {selectedMember && (
@@ -407,6 +454,14 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
                 <MenuOption icon={<Search size={18} />} label="Pesquisar" />
                 <MenuOption icon={<BellOff size={18} />} label="Silenciar notificações" />
                 <MenuOption icon={<Wallpaper size={18} />} label="Papel de parede" />
+                <MenuOption
+                  icon={<MapPin size={18} />}
+                  label="Localização"
+                  onClick={() => {
+                    setShowMenu(false);
+                    void shareLocation();
+                  }}
+                />
                 <div className="h-px bg-white/5 my-1" />
                 <MenuOption icon={<Eraser size={18} />} label="Limpar conversa" onClick={() => setShowClearModal(true)} />
                 <MenuOption icon={<Trash2 size={18} className="text-red-500" />} label="Apagar conversa" onClick={() => setShowDeleteModal(true)} className="text-red-500" />
@@ -524,6 +579,13 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
                   {msg.mediaUrl ? <VideoBubble msg={msg} /> : (
                     <div className="text-xs text-gray-500 px-2">Vídeo indisponível</div>
                   )}
+                </div>
+              );
+            }
+            if (msg.kind === 'location' && msg.location) {
+              return (
+                <div key={msg.id}>
+                  <LocationBubble msg={msg} />
                 </div>
               );
             }
@@ -930,6 +992,44 @@ function formatVoiceDuration(sec: number) {
   return m > 0 ? `${m}:${r.toString().padStart(2, '0')}` : `0:${r.toString().padStart(2, '0')}`;
 }
 
+function LocationBubble({ msg }: { msg: UiMessage }) {
+  const loc = msg.location;
+  if (!loc) return null;
+  const mapsUrl = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
+  return (
+    <div className={cn('flex flex-col max-w-[85%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <a
+        href={mapsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn(
+          'flex items-center gap-3 px-4 py-3 rounded-[22px] text-sm shadow-xl border transition-all min-w-[220px]',
+          msg.isMe
+            ? 'bg-brand text-[#020617] font-bold rounded-tr-none border-brand/40'
+            : 'bg-white/10 backdrop-blur-2xl rounded-tl-none border-white/10 text-white'
+        )}
+      >
+        <span className="shrink-0 w-10 h-10 rounded-full bg-black/20 flex items-center justify-center">
+          <MapPin size={20} />
+        </span>
+        <div className="flex-1 min-w-0 text-left">
+          <p className="font-bold truncate">{msg.text || 'Localização'}</p>
+          <p className="text-[10px] opacity-80 truncate">Toque para abrir no mapa</p>
+        </div>
+      </a>
+      <div className="flex items-center gap-2 mt-1.5 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.isMe && (
+          <div className="flex -space-x-1 opacity-80">
+            <span className="text-brand text-[10px] font-black">✓</span>
+            <span className="text-brand text-[10px] font-black">✓</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ImageBubble({ msg }: { msg: UiMessage }) {
   if (!msg.mediaUrl) return null;
   return (
@@ -1081,7 +1181,9 @@ function ChatInfoScreen({
   onlyAdminsCanEditInfo,
   setOnlyAdminsCanEditInfo,
   ephemeralMessages,
-  setEphemeralMessages
+  setEphemeralMessages,
+  showBlockContact,
+  onBlockContact,
 }: { 
   key?: string,
   chat: any, 
@@ -1094,7 +1196,9 @@ function ChatInfoScreen({
   onlyAdminsCanEditInfo?: boolean,
   setOnlyAdminsCanEditInfo?: (val: boolean) => void,
   ephemeralMessages?: boolean,
-  setEphemeralMessages?: (val: boolean) => void
+  setEphemeralMessages?: (val: boolean) => void,
+  showBlockContact?: boolean,
+  onBlockContact?: () => void,
 }) {
   const isHighOfficer = ['Marechal', 'General'].includes(currentUserRole);
 
@@ -1241,9 +1345,21 @@ function ChatInfoScreen({
         )}
 
         <div className="space-y-3">
-          <button className="w-full py-4 rounded-2xl bg-red-500/10 text-red-500 font-bold border border-red-500/20 hover:bg-red-500/20 transition-all">
-            {chat.isGroup ? 'Sair do Grupo' : 'Bloquear Contato'}
-          </button>
+          {showBlockContact && onBlockContact ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Bloquear ${chat.name}? Deixará de aparecer na lista de novos chats.`)) onBlockContact();
+              }}
+              className="w-full py-4 rounded-2xl bg-red-500/10 text-red-500 font-bold border border-red-500/20 hover:bg-red-500/20 transition-all"
+            >
+              Bloquear contacto
+            </button>
+          ) : (
+            <button type="button" className="w-full py-4 rounded-2xl bg-red-500/10 text-red-500 font-bold border border-red-500/20 hover:bg-red-500/20 transition-all">
+              {chat.isGroup ? 'Sair do Grupo' : 'Bloquear Contato'}
+            </button>
+          )}
           <button className="w-full py-4 rounded-2xl bg-white/5 text-gray-400 font-bold border border-white/10 hover:bg-white/10 transition-all">
             Denunciar
           </button>

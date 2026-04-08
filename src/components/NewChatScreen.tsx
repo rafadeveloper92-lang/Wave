@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Search, UserPlus, MessageSquare, Loader2, AlertCircle } from 'lucide-react';
 import { useWaveContacts, type WaveContact } from '../hooks/useWaveContacts';
+import { getBlockedUserIds } from '../lib/chatPreferences';
 
 interface NewChatScreenProps {
   key?: string;
@@ -11,13 +12,21 @@ interface NewChatScreenProps {
 
 export default function NewChatScreen({ onBack, onSelectContact }: NewChatScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [blockTick, setBlockTick] = useState(0);
   const { contacts, loading, error, refetch } = useWaveContacts(true);
 
-  const filteredContacts = useMemo(
-    () =>
-      contacts.filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase())),
-    [contacts, searchQuery]
-  );
+  useEffect(() => {
+    const onBlock = () => setBlockTick((t) => t + 1);
+    window.addEventListener('wave-blocklist-changed', onBlock);
+    return () => window.removeEventListener('wave-blocklist-changed', onBlock);
+  }, []);
+
+  const filteredContacts = useMemo(() => {
+    const blocked = getBlockedUserIds();
+    return contacts.filter(
+      (c) => !blocked.has(c.id) && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [contacts, searchQuery, blockTick]);
 
   return (
     <motion.div

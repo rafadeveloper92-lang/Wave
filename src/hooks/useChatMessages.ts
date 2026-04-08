@@ -13,14 +13,17 @@ export type ChatMessageRow = {
   duration_sec?: number | null;
 };
 
+export type LocationPayload = { lat: number; lng: number; label?: string };
+
 export type UiMessage = {
   id: string;
-  kind: 'text' | 'voice' | 'image' | 'video';
+  kind: 'text' | 'voice' | 'image' | 'video' | 'location';
   text: string;
   time: string;
   isMe: boolean;
   mediaUrl?: string;
   durationSec?: number;
+  location?: LocationPayload;
 };
 
 const VOICE_BUCKET = 'chat-voice';
@@ -39,12 +42,44 @@ function publicUrl(bucket: string, path: string) {
   return data.publicUrl;
 }
 
+function parseLocationBody(body: string): LocationPayload | null {
+  try {
+    const o = JSON.parse(body) as { lat?: number; lng?: number; label?: string };
+    if (typeof o.lat !== 'number' || typeof o.lng !== 'number') return null;
+    if (!Number.isFinite(o.lat) || !Number.isFinite(o.lng)) return null;
+    return { lat: o.lat, lng: o.lng, label: typeof o.label === 'string' ? o.label : undefined };
+  } catch {
+    return null;
+  }
+}
+
 function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
   const mt = row.message_type || 'text';
   let mediaUrl: string | undefined;
   if (row.media_path) {
     if (mt === 'voice') mediaUrl = publicUrl(VOICE_BUCKET, row.media_path);
     else if (mt === 'image' || mt === 'video') mediaUrl = publicUrl(MEDIA_BUCKET, row.media_path);
+  }
+
+  if (mt === 'location') {
+    const loc = parseLocationBody(row.body);
+    if (!loc) {
+      return {
+        id: row.id,
+        kind: 'text',
+        text: row.body,
+        time: formatTime(row.created_at),
+        isMe: currentUserId != null && row.sender_id === currentUserId,
+      };
+    }
+    return {
+      id: row.id,
+      kind: 'location',
+      text: loc.label || 'Localização',
+      time: formatTime(row.created_at),
+      isMe: currentUserId != null && row.sender_id === currentUserId,
+      location: loc,
+    };
   }
 
   if (mt === 'voice' && row.media_path) {
@@ -175,6 +210,26 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
     [roomKey, currentUserId]
   );
 
+  const sendLocationMessage = useCallback(
+    async (lat: number, lng: number, label?: string) => {
+      if (!roomKey || !currentUserId) return { error: 'Sessão inválida' };
+      const payload = JSON.stringify({
+        lat,
+        lng,
+        label: label?.trim() || undefined,
+      });
+      const { error: insErr } = await supabase.from('chat_messages').insert({
+        room_key: roomKey,
+        sender_id: currentUserId,
+        body: payload,
+        message_type: 'location',
+      });
+      if (insErr) return { error: insErr.message };
+      return { error: null as string | null };
+    },
+    [roomKey, currentUserId]
+  );
+
   const sendVoiceMessage = useCallback(
     async (blob: Blob, durationSec: number) => {
       if (!roomKey || !currentUserId) return { error: 'Sessão ou sala inválida' };
@@ -267,5 +322,6 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
     sendMessage,
     sendVoiceMessage,
     sendMediaMessage,
+    sendLocationMessage,
   };
 }

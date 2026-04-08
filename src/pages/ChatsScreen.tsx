@@ -4,6 +4,7 @@ import { Pin, BellOff, Trash2, CheckCircle, MoreVertical, X, Lock, Eye, EyeOff, 
 import { cn } from '../lib/utils';
 import NewChatScreen from '../components/NewChatScreen';
 import StatusEditor from '../components/StatusEditor';
+import { sortChatsWithPins, togglePinChat, isChatPinned, getBlockedUsers, unblockUser } from '../lib/chatPreferences';
 
 const mockChats = [
   { id: 'chat-1', name: 'Ana Silva', avatar: 'https://i.pravatar.cc/150?u=ana', message: 'Sua foto de hoje ficou ótima! 😍', time: '1m', unread: 2, online: true },
@@ -38,6 +39,30 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [pinTick, setPinTick] = useState(0);
+  const [blockListTick, setBlockListTick] = useState(0);
+
+  useEffect(() => {
+    const onPins = () => setPinTick((t) => t + 1);
+    window.addEventListener('wave-pins-changed', onPins);
+    return () => window.removeEventListener('wave-pins-changed', onPins);
+  }, []);
+
+  useEffect(() => {
+    const onBl = () => setBlockListTick((t) => t + 1);
+    window.addEventListener('wave-blocklist-changed', onBl);
+    return () => window.removeEventListener('wave-blocklist-changed', onBl);
+  }, []);
+
+  useEffect(() => {
+    const onBlocked = (e: Event) => {
+      const id = (e as CustomEvent<{ peerUserId: string }>).detail?.peerUserId;
+      if (!id) return;
+      setChats((prev) => prev.filter((c) => c.peerUserId !== id));
+    };
+    window.addEventListener('wave-user-blocked', onBlocked);
+    return () => window.removeEventListener('wave-user-blocked', onBlocked);
+  }, []);
 
   const handleStart = (chat: any, e: React.MouseEvent | React.TouchEvent) => {
     const pos = 'touches' in e ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: (e as React.MouseEvent).clientX, y: (e as React.MouseEvent).clientY };
@@ -160,10 +185,15 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
     setShowStatusEditor(null);
   };
 
-  const filteredChats = chats.filter(chat => 
-    chat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    chat.message.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredChats = sortChatsWithPins(
+    chats.filter(
+      (chat) =>
+        chat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        chat.message.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  ) as typeof chats;
+  void pinTick;
+  void blockListTick;
 
   const handleCancel = () => {
     if (longPressTimer) {
@@ -200,6 +230,28 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
           className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-11 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-brand/50 transition-all"
         />
       </div>
+
+      {getBlockedUsers().length > 0 && (
+        <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">
+            Bloqueados ({getBlockedUsers().length})
+          </h3>
+          <div className="space-y-1.5 max-h-32 overflow-y-auto no-scrollbar">
+            {getBlockedUsers().map((b) => (
+              <div key={b.id} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-xl hover:bg-white/5">
+                <span className="text-xs font-medium truncate">{b.name}</span>
+                <button
+                  type="button"
+                  onClick={() => unblockUser(b.id)}
+                  className="text-[10px] font-bold text-brand shrink-0 uppercase"
+                >
+                  Desbloquear
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Status Section */}
       <div className="space-y-3">
@@ -311,6 +363,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
             <div className="flex-1 min-w-0 border-b border-white/5 pb-3">
               <div className="flex justify-between items-center mb-0.5">
                 <div className="flex items-center gap-1.5">
+                  {isChatPinned(chat.id) && <Pin size={12} className="text-brand shrink-0" />}
                   <h3 className="font-semibold text-base truncate">{chat.name}</h3>
                   {lockedChats[chat.id] && <Lock size={10} className="text-red-500" />}
                 </div>
@@ -361,7 +414,14 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
 
               {/* Options */}
               <div className="p-2">
-                <MenuOption icon={<Pin size={20} />} label="Fixar conversa" onClick={() => setSelectedChat(null)} />
+                <MenuOption
+                  icon={<Pin size={20} />}
+                  label={selectedChat && isChatPinned(selectedChat.id) ? 'Desfixar conversa' : 'Fixar conversa'}
+                  onClick={() => {
+                    if (selectedChat) togglePinChat(selectedChat.id);
+                    setSelectedChat(null);
+                  }}
+                />
                 <MenuOption 
                   icon={<Lock size={20} />} 
                   label={lockedChats[selectedChat.id] ? "Remover senha" : "Colocar senha"} 

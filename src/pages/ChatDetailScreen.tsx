@@ -7,9 +7,9 @@ import {
   MoreVertical,
   Send,
   Smile,
-  Paperclip,
   User,
   Image,
+  Camera,
   Search,
   BellOff,
   Wallpaper,
@@ -105,7 +105,8 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     sendMediaMessage,
   } = useChatMessages(roomKey, userId);
 
-  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const [localMessages, setLocalMessages] = useState<UiMessage[]>(() =>
     seedLocalMessages(Boolean(chat.isGroup), null)
@@ -563,9 +564,17 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
         ) : (
           <div className="flex items-center gap-2">
             <input
-              ref={mediaInputRef}
+              ref={galleryInputRef}
               type="file"
               accept="image/*,video/*"
+              className="hidden"
+              onChange={(ev) => void handleMediaFile(ev)}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*,video/*"
+              capture="environment"
               className="hidden"
               onChange={(ev) => void handleMediaFile(ev)}
             />
@@ -583,11 +592,19 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
               />
               <button
                 type="button"
-                title="Foto ou vídeo curto"
-                onClick={() => mediaInputRef.current?.click()}
-                className="text-gray-400 hover:text-brand transition-colors shrink-0"
+                title="Galeria — fotos e vídeos"
+                onClick={() => galleryInputRef.current?.click()}
+                className="text-gray-400 hover:text-brand transition-colors shrink-0 p-0.5"
               >
-                <Paperclip size={22} />
+                <Image size={22} />
+              </button>
+              <button
+                type="button"
+                title="Câmara — tirar foto ou gravar vídeo"
+                onClick={() => cameraInputRef.current?.click()}
+                className="text-gray-400 hover:text-brand transition-colors shrink-0 p-0.5"
+              >
+                <Camera size={22} />
               </button>
             </div>
             <button

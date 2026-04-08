@@ -11,6 +11,7 @@ export type ChatMessageRow = {
   message_type?: string;
   media_path?: string | null;
   duration_sec?: number | null;
+  read_at?: string | null;
 };
 
 export type LocationPayload = { lat: number; lng: number; label?: string };
@@ -24,6 +25,7 @@ export type UiMessage = {
   mediaUrl?: string;
   durationSec?: number;
   location?: LocationPayload;
+  readAt?: string | null;
 };
 
 const VOICE_BUCKET = 'chat-voice';
@@ -54,6 +56,7 @@ function parseLocationBody(body: string): LocationPayload | null {
 }
 
 function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
+  const readAt = row.read_at ?? null;
   const mt = row.message_type || 'text';
   let mediaUrl: string | undefined;
   if (row.media_path) {
@@ -70,6 +73,7 @@ function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
         text: row.body,
         time: formatTime(row.created_at),
         isMe: currentUserId != null && row.sender_id === currentUserId,
+        readAt,
       };
     }
     return {
@@ -79,6 +83,7 @@ function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
       time: formatTime(row.created_at),
       isMe: currentUserId != null && row.sender_id === currentUserId,
       location: loc,
+      readAt,
     };
   }
 
@@ -91,6 +96,7 @@ function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
       isMe: currentUserId != null && row.sender_id === currentUserId,
       mediaUrl,
       durationSec: row.duration_sec ?? undefined,
+      readAt,
     };
   }
   if (mt === 'image' && row.media_path) {
@@ -101,6 +107,7 @@ function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
       time: formatTime(row.created_at),
       isMe: currentUserId != null && row.sender_id === currentUserId,
       mediaUrl,
+      readAt,
     };
   }
   if (mt === 'video' && row.media_path) {
@@ -112,6 +119,7 @@ function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
       isMe: currentUserId != null && row.sender_id === currentUserId,
       mediaUrl,
       durationSec: row.duration_sec ?? undefined,
+      readAt,
     };
   }
   return {
@@ -120,6 +128,7 @@ function rowToUi(row: ChatMessageRow, currentUserId: string | null): UiMessage {
     text: row.body,
     time: formatTime(row.created_at),
     isMe: currentUserId != null && row.sender_id === currentUserId,
+    readAt,
   };
 }
 
@@ -149,7 +158,7 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
     setError(null);
     const { data, error: qErr } = await supabase
       .from('chat_messages')
-      .select('id, room_key, sender_id, body, created_at, message_type, media_path, duration_sec')
+      .select('id, room_key, sender_id, body, created_at, message_type, media_path, duration_sec, read_at')
       .eq('room_key', roomKey)
       .order('created_at', { ascending: true })
       .limit(300);
@@ -188,11 +197,36 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
           });
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `room_key=eq.${roomKey}`,
+        },
+        (payload) => {
+          const row = payload.new as ChatMessageRow;
+          setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ...row } : r)));
+        }
+      )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
+  }, [roomKey, currentUserId]);
+
+  const markOthersMessagesAsRead = useCallback(async () => {
+    if (!roomKey || !currentUserId) return;
+    const now = new Date().toISOString();
+    const { error: uErr } = await supabase
+      .from('chat_messages')
+      .update({ read_at: now })
+      .eq('room_key', roomKey)
+      .neq('sender_id', currentUserId)
+      .is('read_at', null);
+    if (uErr) console.warn('mark read', uErr.message);
   }, [roomKey, currentUserId]);
 
   const sendMessage = useCallback(
@@ -323,5 +357,6 @@ export function useChatMessages(roomKey: string | null, currentUserId: string | 
     sendVoiceMessage,
     sendMediaMessage,
     sendLocationMessage,
+    markOthersMessagesAsRead,
   };
 }

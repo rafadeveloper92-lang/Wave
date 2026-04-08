@@ -64,6 +64,16 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
     return () => window.removeEventListener('wave-user-blocked', onBlocked);
   }, []);
 
+  useEffect(() => {
+    const onRemoved = (e: Event) => {
+      const chatId = (e as CustomEvent<{ chatId: string }>).detail?.chatId;
+      if (!chatId) return;
+      setChats((prev) => prev.filter((c) => c.id !== chatId));
+    };
+    window.addEventListener('wave-chat-removed', onRemoved);
+    return () => window.removeEventListener('wave-chat-removed', onRemoved);
+  }, []);
+
   const handleStart = (chat: any, e: React.MouseEvent | React.TouchEvent) => {
     const pos = 'touches' in e ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: (e as React.MouseEvent).clientX, y: (e as React.MouseEvent).clientY };
     touchStartPos.current = pos;
@@ -430,7 +440,19 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                 <MenuOption icon={<BellOff size={20} />} label="Silenciar notificações" onClick={() => setSelectedChat(null)} />
                 <MenuOption icon={<CheckCircle size={20} />} label="Marcar como lida" onClick={() => setSelectedChat(null)} />
                 <div className="h-px bg-white/5 my-1 mx-4" />
-                <MenuOption icon={<Trash2 size={20} />} label="Apagar conversa" variant="danger" onClick={() => setSelectedChat(null)} />
+                <MenuOption
+                  icon={<Trash2 size={20} />}
+                  label="Apagar conversa"
+                  variant="danger"
+                  onClick={() => {
+                    if (selectedChat) {
+                      window.dispatchEvent(
+                        new CustomEvent('wave-chat-removed', { detail: { chatId: selectedChat.id } })
+                      );
+                    }
+                    setSelectedChat(null);
+                  }}
+                />
               </div>
             </motion.div>
           </div>

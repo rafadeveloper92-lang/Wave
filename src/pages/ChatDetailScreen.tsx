@@ -30,6 +30,7 @@ import { useChatMessages, type UiMessage } from '../hooks/useChatMessages';
 import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
 import { validateChatMediaFile } from '../lib/mediaChat';
 import { blockUser } from '../lib/chatPreferences';
+import { useMyPresenceHeartbeat, usePeerPresence, useTypingIndicator } from '../hooks/useChatPresence';
 
 interface ChatDetailProps {
   key?: string;
@@ -45,6 +46,8 @@ interface ChatDetailProps {
     peerUserId?: string;
   };
   onBack: () => void;
+  /** Remove da lista principal ao apagar conversa */
+  onChatRemoved?: (chatId: string) => void;
 }
 
 type GroupRole = 'Marechal' | 'General' | 'Capitão' | 'Membro';
@@ -80,7 +83,7 @@ function seedLocalMessages(isGroup: boolean, selfId: string | null): UiMessage[]
       ];
 }
 
-export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
+export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDetailProps) {
   const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -109,7 +112,12 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     sendVoiceMessage,
     sendMediaMessage,
     sendLocationMessage,
+    markOthersMessagesAsRead,
   } = useChatMessages(roomKey, userId);
+
+  useMyPresenceHeartbeat(userId);
+  const { presenceSubtitle } = usePeerPresence(chat.peerUserId, chat.online);
+  const { peerTyping, sendTyping } = useTypingIndicator(roomKey, userId);
 
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +140,21 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
   }, [messagesError, chat.isGroup, userId]);
 
   const displayMessages = useLocalOnly ? localMessages : syncedMessages;
+
+  useEffect(() => {
+    if (!useLocalOnly && userId && roomKey) {
+      void markOthersMessagesAsRead();
+    }
+  }, [useLocalOnly, userId, roomKey, syncedMessages.length, markOthersMessagesAsRead]);
+
+  const typingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifyTyping = useCallback(
+    (active: boolean) => {
+      if (useLocalOnly || !userId) return;
+      sendTyping(active);
+    },
+    [useLocalOnly, userId, sendTyping]
+  );
 
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
@@ -353,6 +376,8 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
   const handleDeleteChat = () => {
     setShowDeleteModal(false);
     setShowMenu(false);
+    window.dispatchEvent(new CustomEvent('wave-chat-removed', { detail: { chatId: chat.id } }));
+    onChatRemoved?.(chat.id);
     onBack();
   };
 
@@ -514,8 +539,12 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
           </div>
           <div>
             <h3 className="font-bold text-sm">{chat.name}</h3>
-            <p className="text-[10px] text-brand font-medium">
-              {chat.isGroup ? `${chat.members || '10'} membros` : (chat.online ? 'Online' : 'Visto por último às 10:00')}
+            <p className="text-[10px] text-brand font-medium min-h-[14px]">
+              {chat.isGroup
+                ? `${chat.members || '10'} membros`
+                : peerTyping
+                  ? 'a digitar…'
+                  : presenceSubtitle}
             </p>
           </div>
         </div>
@@ -551,6 +580,26 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
         )}
         {messagesLoading && !useLocalOnly && (
           <p className="relative z-20 text-center text-xs text-gray-500 py-2">A carregar mensagens…</p>
+        )}
+
+        {peerTyping && !chat.isGroup && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative z-20 flex items-center gap-1.5 px-4 py-2"
+          >
+            <span className="text-[11px] text-gray-500 font-medium">a digitar</span>
+            <span className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <motion.span
+                  key={i}
+                  className="w-1.5 h-1.5 rounded-full bg-brand/80"
+                  animate={{ opacity: [0.3, 1, 0.3], y: [0, -3, 0] }}
+                  transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.15 }}
+                />
+              ))}
+            </span>
+          </motion.div>
         )}
 
         <div className="relative z-10 space-y-6">
@@ -607,12 +656,7 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
                 </div>
                 <div className="flex items-center gap-2 mt-1.5 px-1">
                   <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
-                  {msg.isMe && (
-                    <div className="flex -space-x-1 opacity-80">
-                      <span className="text-brand text-[10px] font-black">✓</span>
-                      <span className="text-brand text-[10px] font-black">✓</span>
-                    </div>
-                  )}
+                  {msg.isMe && <ReadTicks readAt={msg.readAt} />}
                 </div>
               </div>
             );
@@ -650,7 +694,18 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
               <input
                 type="text"
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setInputText(v);
+                  if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+                  if (v.trim()) {
+                    notifyTyping(true);
+                    typingDebounceRef.current = setTimeout(() => notifyTyping(false), 2000);
+                  } else {
+                    notifyTyping(false);
+                  }
+                }}
+                onBlur={() => notifyTyping(false)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                 placeholder="Mensagem"
                 className="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-2 placeholder:text-gray-500"
@@ -985,6 +1040,20 @@ function Modal({ title, description, confirmLabel, onConfirm, onCancel, isDanger
   );
 }
 
+function cn(...inputs: any[]) {
+  return inputs.filter(Boolean).join(' ');
+}
+
+function ReadTicks({ readAt }: { readAt?: string | null }) {
+  const read = Boolean(readAt);
+  return (
+    <div className="flex -space-x-0.5 shrink-0">
+      <span className={cn('text-[10px] font-black', read ? 'text-blue-500' : 'text-gray-500/70')}>✓</span>
+      <span className={cn('text-[10px] font-black', read ? 'text-blue-500' : 'text-gray-500/70')}>✓</span>
+    </div>
+  );
+}
+
 function formatVoiceDuration(sec: number) {
   const s = Math.max(0, Math.floor(sec));
   const m = Math.floor(s / 60);
@@ -1019,12 +1088,7 @@ function LocationBubble({ msg }: { msg: UiMessage }) {
       </a>
       <div className="flex items-center gap-2 mt-1.5 px-1">
         <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
-        {msg.isMe && (
-          <div className="flex -space-x-1 opacity-80">
-            <span className="text-brand text-[10px] font-black">✓</span>
-            <span className="text-brand text-[10px] font-black">✓</span>
-          </div>
-        )}
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
       </div>
     </div>
   );
@@ -1047,12 +1111,7 @@ function ImageBubble({ msg }: { msg: UiMessage }) {
       ) : null}
       <div className="flex items-center gap-2 mt-1 px-1">
         <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
-        {msg.isMe && (
-          <div className="flex -space-x-1 opacity-80">
-            <span className="text-brand text-[10px] font-black">✓</span>
-            <span className="text-brand text-[10px] font-black">✓</span>
-          </div>
-        )}
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
       </div>
     </div>
   );
@@ -1084,12 +1143,7 @@ function VideoBubble({ msg }: { msg: UiMessage }) {
         {msg.durationSec != null && msg.durationSec > 0 && (
           <span className="text-[10px] text-gray-600">{formatVoiceDuration(msg.durationSec)}</span>
         )}
-        {msg.isMe && (
-          <div className="flex -space-x-1 opacity-80">
-            <span className="text-brand text-[10px] font-black">✓</span>
-            <span className="text-brand text-[10px] font-black">✓</span>
-          </div>
-        )}
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
       </div>
     </div>
   );
@@ -1155,19 +1209,10 @@ function VoiceBubble({ msg }: { msg: UiMessage }) {
       </button>
       <div className="flex items-center gap-2 mt-1.5 px-1">
         <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
-        {msg.isMe && (
-          <div className="flex -space-x-1 opacity-80">
-            <span className="text-brand text-[10px] font-black">✓</span>
-            <span className="text-brand text-[10px] font-black">✓</span>
-          </div>
-        )}
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
       </div>
     </div>
   );
-}
-
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
 }
 
 function ChatInfoScreen({ 

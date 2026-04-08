@@ -22,16 +22,33 @@ import ProfileScreen from './pages/ProfileScreen';
 import TodosScreen from './pages/TodosScreen';
 import ChatDetailScreen from './pages/ChatDetailScreen';
 import { AnimatePresence, motion } from 'motion/react';
+import { useAuth } from './contexts/AuthContext';
+import AuthScreen from './components/AuthScreen';
+import { usePushRegistration } from './hooks/usePushRegistration';
 
 type Tab = 'chats' | 'reels' | 'groups' | 'discover' | 'profile' | 'todos';
 
 export default function App() {
+  const { user, loading } = useAuth();
+  usePushRegistration(user?.id ?? null);
   const [activeTab, setActiveTab] = useState<Tab>('chats');
   const [selectedChat, setSelectedChat] = useState<any>(null);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
   const [selectedStory, setSelectedStory] = useState<any>(null);
   const [selectedVideo, setSelectedVideo] = useState<any>(null);
   const [selectedProfile, setSelectedProfile] = useState<any>(null);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#020617] text-brand text-sm font-medium">
+        A carregar…
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen />;
+  }
 
   const renderScreen = () => {
     switch (activeTab) {

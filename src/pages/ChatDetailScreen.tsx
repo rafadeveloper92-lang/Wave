@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Phone, Video, MoreVertical, Send, Smile, Paperclip, User, Image, Search, BellOff, Wallpaper, Trash2, Eraser, AlertCircle, MessageSquare, ChevronRight, Star, Shield } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { useChatMessages } from '../hooks/useChatMessages';
+import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
 
-interface Message {
+export interface Message {
   id: string;
   text: string;
   time: string;
@@ -42,7 +45,49 @@ const ROLE_CONFIG = {
   'Membro': { label: 'Membro', color: 'text-gray-500', bg: 'bg-white/5', border: 'border-white/10', icon: '👤', priority: 1 },
 };
 
+function seedMessagesForChat(isGroup: boolean): Message[] {
+  return isGroup
+    ? [
+        { id: 'msg-1', text: 'Bem-vindos ao grupo!', time: '09:00', isMe: false },
+        { id: 'msg-2', text: 'Alguém viu as novidades da Wave?', time: '09:05', isMe: false },
+      ]
+    : [
+        { id: 'msg-1', text: 'Oi! Como você está?', time: '10:00', isMe: false },
+        { id: 'msg-2', text: 'Tudo bem por aqui, e você?', time: '10:02', isMe: true },
+        { id: 'msg-3', text: 'Sua foto de hoje ficou ótima! 😍', time: '10:05', isMe: false },
+      ];
+}
+
 export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
+  const { user } = useAuth();
+  const roomKey = useMemo(
+    () => (chat.isGroup ? groupRoomKey(chat.id) : dmRoomKey(chat.id)),
+    [chat.id, chat.isGroup]
+  );
+  const {
+    messages: syncedMessages,
+    loading: messagesLoading,
+    error: messagesError,
+    sendMessage: sendSyncedMessage,
+  } = useChatMessages(roomKey, user?.id ?? null);
+
+  const [localMessages, setLocalMessages] = useState<Message[]>(() => seedMessagesForChat(Boolean(chat.isGroup)));
+  const [useLocalOnly, setUseLocalOnly] = useState(false);
+
+  useEffect(() => {
+    setLocalMessages(seedMessagesForChat(Boolean(chat.isGroup)));
+    setUseLocalOnly(false);
+  }, [roomKey, chat.isGroup]);
+
+  useEffect(() => {
+    if (messagesError) {
+      setUseLocalOnly(true);
+      setLocalMessages(seedMessagesForChat(Boolean(chat.isGroup)));
+    }
+  }, [messagesError, chat.isGroup]);
+
+  const displayMessages = useLocalOnly ? localMessages : syncedMessages;
+
   const [showInfo, setShowInfo] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -78,34 +123,31 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     setSelectedMember(null);
   };
 
-  const [messages, setMessages] = useState<Message[]>(
-    chat.isGroup 
-      ? [
-          { id: 'msg-1', text: 'Bem-vindos ao grupo!', time: '09:00', isMe: false },
-          { id: 'msg-2', text: 'Alguém viu as novidades da Wave?', time: '09:05', isMe: false },
-        ]
-      : [
-          { id: 'msg-1', text: 'Oi! Como você está?', time: '10:00', isMe: false },
-          { id: 'msg-2', text: 'Tudo bem por aqui, e você?', time: '10:02', isMe: true },
-          { id: 'msg-3', text: 'Sua foto de hoje ficou ótima! 😍', time: '10:05', isMe: false },
-        ]
-  );
   const [inputText, setInputText] = useState('');
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputText.trim()) return;
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isMe: true,
-    };
-    setMessages([...messages, newMessage]);
+    if (useLocalOnly) {
+      const newMessage: Message = {
+        id: Date.now().toString(),
+        text: inputText.trim(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isMe: true,
+      };
+      setLocalMessages((prev) => [...prev, newMessage]);
+      setInputText('');
+      return;
+    }
+    const { error: sendErr } = await sendSyncedMessage(inputText);
+    if (sendErr) {
+      alert(sendErr);
+      return;
+    }
     setInputText('');
   };
 
   const handleClearChat = () => {
-    setMessages([]);
+    if (useLocalOnly) setLocalMessages([]);
     setShowClearModal(false);
     setShowMenu(false);
   };
@@ -251,8 +293,19 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
         <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-brand/25 via-brand/5 to-transparent pointer-events-none"></div>
         <div className="absolute bottom-0 right-0 w-full h-96 bg-gradient-to-t from-brand/10 via-transparent to-transparent pointer-events-none"></div>
         
+        {messagesError && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
+            Modo offline: a base de dados ainda não tem a tabela de mensagens ou houve erro. Execute{' '}
+            <code className="text-brand">supabase/migrations/001_wave_messaging.sql</code> no projeto Supabase e
+            ative Realtime em <code className="text-brand">chat_messages</code>.
+          </div>
+        )}
+        {messagesLoading && !useLocalOnly && (
+          <p className="relative z-20 text-center text-xs text-gray-500 py-2">A carregar mensagens…</p>
+        )}
+
         <div className="relative z-10 space-y-6">
-          {messages.map((msg) => (
+          {displayMessages.map((msg) => (
             <div key={msg.id} className={cn(
               "flex flex-col max-w-[85%] group",
               msg.isMe ? "ml-auto items-end" : "mr-auto items-start"

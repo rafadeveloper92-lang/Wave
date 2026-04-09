@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Settings, Edit3, Grid, Image as ImageIcon, Play, Plus, Camera } from 'lucide-react';
+import { Settings, Edit3, Grid, Image as ImageIcon, Play, Plus, Camera, LogOut } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 const myPosts = [
   'https://picsum.photos/seed/post1/200/200',
@@ -12,6 +13,7 @@ const myPosts = [
 ];
 
 export default function ProfileScreen() {
+  const { user, signOut } = useAuth();
   const [profilePic, setProfilePic] = useState('https://i.pravatar.cc/300?u=lucas');
   const [coverPhoto, setCoverPhoto] = useState('https://picsum.photos/seed/city/800/600');
   
@@ -93,11 +95,22 @@ export default function ProfileScreen() {
           {/* Info Card */}
           <div className="w-full mt-5 bg-white/5 backdrop-blur-xl border border-white/10 rounded-[32px] p-6 text-center space-y-4 shadow-2xl">
             <div>
-              <h3 className="text-2xl font-bold text-white tracking-tight">Lucas Silva</h3>
-              <p className="text-gray-400 mt-2 text-sm leading-relaxed max-w-[260px] mx-auto">
-                Lucas Silva is a profile profile blogs, and preview connections and community communication.
+              <h3 className="text-2xl font-bold text-white tracking-tight">
+                {user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Perfil'}
+              </h3>
+              <p className="text-gray-400 mt-2 text-xs leading-relaxed max-w-[260px] mx-auto break-all">
+                {user?.email}
               </p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-white/5 border border-white/10 text-sm font-bold text-gray-300 hover:bg-white/10"
+            >
+              <LogOut size={18} />
+              Sair
+            </button>
 
             <div className="pt-4 border-t border-white/5 flex justify-between items-center px-2">
               <div className="text-center">

@@ -1,10 +1,9 @@
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from '@supabase/ssr';
 
-const supabaseUrl = 'https://hhgecmtljovgoqbcqleb.supabase.co';
-const supabaseKey = 'sb_publishable_KR3obEpqz9WJZXWwUVS5xw_iq_rVUAy';
+const supabaseUrl =
+  import.meta.env.VITE_SUPABASE_URL?.trim() || 'https://hhgecmtljovgoqbcqleb.supabase.co';
+const supabaseKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ||
+  'sb_publishable_KR3obEpqz9WJZXWwUVS5xw_iq_rVUAy';
 
-export const createClient = () =>
-  createBrowserClient(
-    supabaseUrl,
-    supabaseKey,
-  );
+export const createClient = () => createBrowserClient(supabaseUrl, supabaseKey);

@@ -1,15 +1,36 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Phone, Video, MoreVertical, Send, Smile, Paperclip, User, Image, Search, BellOff, Wallpaper, Trash2, Eraser, AlertCircle, MessageSquare, ChevronRight, Star, Shield } from 'lucide-react';
-import CallOverlay from '../components/CallOverlay';
-import { useWebRtcCall } from '../hooks/useWebRtcCall';
-
-interface Message {
-  id: string;
-  text: string;
-  time: string;
-  isMe: boolean;
-}
+import {
+  ArrowLeft,
+  Phone,
+  Video,
+  MoreVertical,
+  Send,
+  Smile,
+  User,
+  Image,
+  Camera,
+  Search,
+  BellOff,
+  Wallpaper,
+  Trash2,
+  Eraser,
+  AlertCircle,
+  MessageSquare,
+  ChevronRight,
+  Star,
+  Shield,
+  Mic,
+  Play,
+  Pause,
+  MapPin,
+} from 'lucide-react';
+import { supabase } from '../services/supabaseClient';
+import { useChatMessages, type UiMessage } from '../hooks/useChatMessages';
+import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
+import { validateChatMediaFile } from '../lib/mediaChat';
+import { blockUser } from '../lib/chatPreferences';
+import { useMyPresenceHeartbeat, usePeerPresence, useTypingIndicator } from '../hooks/useChatPresence';
 
 interface ChatDetailProps {
   key?: string;
@@ -21,8 +42,12 @@ interface ChatDetailProps {
     isGroup?: boolean;
     members?: string;
     description?: string;
+    /** UUID do outro utilizador (DM); se definido, a sala de mensagens é wave:public:dm:<uuid> */
+    peerUserId?: string;
   };
   onBack: () => void;
+  /** Remove da lista principal ao apagar conversa */
+  onChatRemoved?: (chatId: string) => void;
 }
 
 type GroupRole = 'Marechal' | 'General' | 'Capitão' | 'Membro';
@@ -44,11 +69,247 @@ const ROLE_CONFIG = {
   'Membro': { label: 'Membro', color: 'text-gray-500', bg: 'bg-white/5', border: 'border-white/10', icon: '👤', priority: 1 },
 };
 
-export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
-  const signalingEnabled = Boolean(
-    import.meta.env.VITE_SUPABASE_URL?.trim() && import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+function seedLocalMessages(isGroup: boolean, selfId: string | null): UiMessage[] {
+  const isMe = Boolean(selfId);
+  return isGroup
+    ? [
+        { id: 'msg-1', kind: 'text', text: 'Bem-vindos ao grupo!', time: '09:00', isMe: false },
+        { id: 'msg-2', kind: 'text', text: 'Alguém viu as novidades da Wave?', time: '09:05', isMe: false },
+      ]
+    : [
+        { id: 'msg-1', kind: 'text', text: 'Oi! Como você está?', time: '10:00', isMe: false },
+        { id: 'msg-2', kind: 'text', text: 'Tudo bem por aqui, e você?', time: '10:02', isMe: isMe },
+        { id: 'msg-3', kind: 'text', text: 'Sua foto de hoje ficou ótima! 😍', time: '10:05', isMe: false },
+      ];
+}
+
+export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDetailProps) {
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUserId(session?.user?.id ?? null);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, session) => {
+      setUserId(session?.user?.id ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const roomKey = useMemo(() => {
+    if (chat.isGroup) return groupRoomKey(chat.id);
+    if (chat.peerUserId) return dmRoomKey(chat.peerUserId);
+    return dmRoomKey(chat.id);
+  }, [chat.id, chat.isGroup, chat.peerUserId]);
+
+  const {
+    messages: syncedMessages,
+    loading: messagesLoading,
+    error: messagesError,
+    sendMessage: sendSyncedMessage,
+    sendVoiceMessage,
+    sendMediaMessage,
+    sendLocationMessage,
+    markOthersMessagesAsRead,
+  } = useChatMessages(roomKey, userId);
+
+  useMyPresenceHeartbeat(userId);
+  const { presenceSubtitle } = usePeerPresence(chat.peerUserId, chat.online);
+  const { peerTyping, sendTyping } = useTypingIndicator(roomKey, userId);
+
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const [localMessages, setLocalMessages] = useState<UiMessage[]>(() =>
+    seedLocalMessages(Boolean(chat.isGroup), null)
   );
-  const rtc = useWebRtcCall(chat.id, { enabled: signalingEnabled, isGroup: Boolean(chat.isGroup) });
+  const [useLocalOnly, setUseLocalOnly] = useState(!userId);
+
+  useEffect(() => {
+    setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
+    setUseLocalOnly(!userId);
+  }, [roomKey, chat.isGroup, userId]);
+
+  useEffect(() => {
+    if (messagesError) {
+      setUseLocalOnly(true);
+      setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
+    }
+  }, [messagesError, chat.isGroup, userId]);
+
+  const displayMessages = useLocalOnly ? localMessages : syncedMessages;
+
+  useEffect(() => {
+    if (!useLocalOnly && userId && roomKey) {
+      void markOthersMessagesAsRead();
+    }
+  }, [useLocalOnly, userId, roomKey, syncedMessages.length, markOthersMessagesAsRead]);
+
+  const typingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifyTyping = useCallback(
+    (active: boolean) => {
+      if (useLocalOnly || !userId) return;
+      sendTyping(active);
+    },
+    [useLocalOnly, userId, sendTyping]
+  );
+
+  const [recording, setRecording] = useState(false);
+  const [recordSecs, setRecordSecs] = useState(0);
+  const mediaRecRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recordTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordStartRef = useRef(0);
+
+  const pickRecorderMime = () => {
+    const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    for (const t of types) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) return t;
+    }
+    return '';
+  };
+
+  const stopMediaStream = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  };
+
+  const startVoiceRecord = async () => {
+    if (recording) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mime = pickRecorderMime();
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunksRef.current.push(e.data);
+      };
+      rec.start(200);
+      mediaRecRef.current = rec;
+      recordStartRef.current = Date.now();
+      setRecording(true);
+      setRecordSecs(0);
+      recordTickRef.current = setInterval(() => {
+        setRecordSecs(Math.floor((Date.now() - recordStartRef.current) / 1000));
+      }, 250);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Microfone indisponível');
+    }
+  };
+
+  const finishVoiceRecord = useCallback(async () => {
+    if (recordTickRef.current) {
+      clearInterval(recordTickRef.current);
+      recordTickRef.current = null;
+    }
+    const rec = mediaRecRef.current;
+    mediaRecRef.current = null;
+    if (!rec) {
+      stopMediaStream();
+      setRecording(false);
+      setRecordSecs(0);
+      return;
+    }
+
+    const blob: Blob = await new Promise((resolve) => {
+      rec.onstop = () => {
+        const b = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        resolve(b);
+      };
+      if (rec.state === 'recording') rec.stop();
+      else {
+        const b = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        resolve(b);
+      }
+    });
+
+    stopMediaStream();
+    setRecording(false);
+    const durationSec = Math.max(0.001, (Date.now() - recordStartRef.current) / 1000);
+    setRecordSecs(0);
+    chunksRef.current = [];
+
+    if (blob.size < 200) return;
+
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (useLocalOnly || !userId) {
+      const url = URL.createObjectURL(blob);
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id: `local-v-${Date.now()}`,
+          kind: 'voice',
+          text: '',
+          time,
+          isMe: true,
+          mediaUrl: url,
+          durationSec: Math.min(300, Math.ceil(durationSec)),
+        },
+      ]);
+      return;
+    }
+
+    const { error: vErr } = await sendVoiceMessage(blob, durationSec);
+    if (vErr) alert(vErr);
+  }, [useLocalOnly, userId, sendVoiceMessage]);
+
+  const handleMediaFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const validated = await validateChatMediaFile(file);
+    if (validated.ok === false) {
+      alert(validated.error);
+      return;
+    }
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const isVideo = file.type.startsWith('video/');
+
+    const caption = inputText.trim();
+
+    if (useLocalOnly || !userId) {
+      const url = URL.createObjectURL(file);
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id: `local-m-${Date.now()}`,
+          kind: isVideo ? 'video' : 'image',
+          text: caption,
+          time,
+          isMe: true,
+          mediaUrl: url,
+          durationSec: validated.durationSec ?? undefined,
+        },
+      ]);
+      if (caption) setInputText('');
+      return;
+    }
+    const { error: mErr } = await sendMediaMessage(file, caption, validated.durationSec);
+    if (mErr) alert(mErr);
+    else if (caption) setInputText('');
+  };
+
+  const cancelVoiceRecord = useCallback(() => {
+    if (recordTickRef.current) {
+      clearInterval(recordTickRef.current);
+      recordTickRef.current = null;
+    }
+    const rec = mediaRecRef.current;
+    mediaRecRef.current = null;
+    if (rec && rec.state === 'recording') {
+      rec.onstop = null;
+      rec.stop();
+    }
+    chunksRef.current = [];
+    stopMediaStream();
+    setRecording(false);
+    setRecordSecs(0);
+  }, []);
 
   const [showInfo, setShowInfo] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -85,34 +346,29 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
     setSelectedMember(null);
   };
 
-  const [messages, setMessages] = useState<Message[]>(
-    chat.isGroup 
-      ? [
-          { id: 'msg-1', text: 'Bem-vindos ao grupo!', time: '09:00', isMe: false },
-          { id: 'msg-2', text: 'Alguém viu as novidades da Wave?', time: '09:05', isMe: false },
-        ]
-      : [
-          { id: 'msg-1', text: 'Oi! Como você está?', time: '10:00', isMe: false },
-          { id: 'msg-2', text: 'Tudo bem por aqui, e você?', time: '10:02', isMe: true },
-          { id: 'msg-3', text: 'Sua foto de hoje ficou ótima! 😍', time: '10:05', isMe: false },
-        ]
-  );
   const [inputText, setInputText] = useState('');
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputText.trim()) return;
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isMe: true,
-    };
-    setMessages([...messages, newMessage]);
-    setInputText('');
+    if (useLocalOnly) {
+      const newMessage: UiMessage = {
+        id: Date.now().toString(),
+        kind: 'text',
+        text: inputText.trim(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isMe: true,
+      };
+      setLocalMessages((prev) => [...prev, newMessage]);
+      setInputText('');
+      return;
+    }
+    const { error: sendErr } = await sendSyncedMessage(inputText);
+    if (sendErr) alert(sendErr);
+    else setInputText('');
   };
 
   const handleClearChat = () => {
-    setMessages([]);
+    if (useLocalOnly) setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
     setShowClearModal(false);
     setShowMenu(false);
   };
@@ -120,11 +376,43 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
   const handleDeleteChat = () => {
     setShowDeleteModal(false);
     setShowMenu(false);
+    window.dispatchEvent(new CustomEvent('wave-chat-removed', { detail: { chatId: chat.id } }));
+    onChatRemoved?.(chat.id);
     onBack();
   };
 
-  const callUiActive = rtc.phase !== 'idle';
-  const canStartCall = !chat.isGroup && signalingEnabled;
+  const shareLocation = useCallback(async () => {
+    if (!navigator.geolocation) {
+      alert('Geolocalização não disponível neste dispositivo.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const label = 'A minha localização';
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (useLocalOnly || !userId) {
+          setLocalMessages((prev) => [
+            ...prev,
+            {
+              id: `loc-${Date.now()}`,
+              kind: 'location',
+              text: label,
+              time,
+              isMe: true,
+              location: { lat, lng, label },
+            },
+          ]);
+          return;
+        }
+        const { error: locErr } = await sendLocationMessage(lat, lng, label);
+        if (locErr) alert(locErr);
+      },
+      () => alert('Permissão de localização negada ou indisponível.'),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
+    );
+  }, [useLocalOnly, userId, sendLocationMessage]);
 
   return (
     <motion.div 
@@ -134,23 +422,6 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
       className="absolute inset-0 bg-[#020617] flex flex-col z-[100]"
     >
-      <CallOverlay
-        visible={callUiActive}
-        phase={rtc.phase}
-        kind={rtc.callKind}
-        peerName={chat.name}
-        peerAvatar={chat.avatar}
-        localStream={rtc.localStream}
-        remoteStream={rtc.remoteStream}
-        isMuted={rtc.isMuted}
-        error={rtc.error}
-        onAccept={rtc.acceptCall}
-        onReject={rtc.rejectCall}
-        onEnd={rtc.endCall}
-        onToggleMute={rtc.toggleMute}
-        onDismissError={rtc.clearError}
-      />
-
       <AnimatePresence>
         {showInfo && (
           <ChatInfoScreen 
@@ -166,6 +437,17 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
             setOnlyAdminsCanEditInfo={setOnlyAdminsCanEditInfo}
             ephemeralMessages={ephemeralMessages}
             setEphemeralMessages={setEphemeralMessages}
+            showBlockContact={!chat.isGroup && Boolean(chat.peerUserId)}
+            onBlockContact={() => {
+              if (chat.peerUserId) {
+                blockUser(chat.peerUserId, chat.name);
+                window.dispatchEvent(
+                  new CustomEvent('wave-user-blocked', { detail: { peerUserId: chat.peerUserId } })
+                );
+                setShowInfo(false);
+                onBack();
+              }
+            }}
           />
         )}
         {selectedMember && (
@@ -176,10 +458,6 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
             currentUserRole={currentUserRole}
             onPromote={handlePromote}
             onBan={handleBan}
-            canStartCall={canStartCall}
-            callActive={callUiActive}
-            onVoiceCall={() => void rtc.startCall('audio')}
-            onVideoCall={() => void rtc.startCall('video')}
           />
         )}
         {showMenu && (
@@ -201,6 +479,14 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
                 <MenuOption icon={<Search size={18} />} label="Pesquisar" />
                 <MenuOption icon={<BellOff size={18} />} label="Silenciar notificações" />
                 <MenuOption icon={<Wallpaper size={18} />} label="Papel de parede" />
+                <MenuOption
+                  icon={<MapPin size={18} />}
+                  label="Localização"
+                  onClick={() => {
+                    setShowMenu(false);
+                    void shareLocation();
+                  }}
+                />
                 <div className="h-px bg-white/5 my-1" />
                 <MenuOption icon={<Eraser size={18} />} label="Limpar conversa" onClick={() => setShowClearModal(true)} />
                 <MenuOption icon={<Trash2 size={18} className="text-red-500" />} label="Apagar conversa" onClick={() => setShowDeleteModal(true)} className="text-red-500" />
@@ -253,36 +539,18 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
           </div>
           <div>
             <h3 className="font-bold text-sm">{chat.name}</h3>
-            <p className="text-[10px] text-brand font-medium">
-              {chat.isGroup ? `${chat.members || '10'} membros` : (chat.online ? 'Online' : 'Visto por último às 10:00')}
+            <p className="text-[10px] text-brand font-medium min-h-[14px]">
+              {chat.isGroup
+                ? `${chat.members || '10'} membros`
+                : peerTyping
+                  ? 'a digitar…'
+                  : presenceSubtitle}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            title={canStartCall ? 'Chamada de vídeo' : chat.isGroup ? 'Chamadas em grupo em breve' : 'Configure Supabase para chamadas'}
-            disabled={!canStartCall || callUiActive}
-            onClick={() => void rtc.startCall('video')}
-            className={cn(
-              'p-2 rounded-full transition-colors',
-              canStartCall && !callUiActive ? 'hover:bg-white/10 text-gray-400' : 'text-gray-600 opacity-50 cursor-not-allowed'
-            )}
-          >
-            <Video size={20} />
-          </button>
-          <button
-            type="button"
-            title={canStartCall ? 'Chamada de voz' : chat.isGroup ? 'Chamadas em grupo em breve' : 'Configure Supabase para chamadas'}
-            disabled={!canStartCall || callUiActive}
-            onClick={() => void rtc.startCall('audio')}
-            className={cn(
-              'p-2 rounded-full transition-colors',
-              canStartCall && !callUiActive ? 'hover:bg-white/10 text-gray-400' : 'text-gray-600 opacity-50 cursor-not-allowed'
-            )}
-          >
-            <Phone size={20} />
-          </button>
+          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Video size={20} /></button>
+          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Phone size={20} /></button>
           <button 
             onClick={() => setShowMenu(!showMenu)}
             className={cn("p-2 rounded-full transition-colors", showMenu ? "bg-brand/20 text-brand" : "hover:bg-white/10 text-gray-400")}
@@ -304,35 +572,95 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
         <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-brand/25 via-brand/5 to-transparent pointer-events-none"></div>
         <div className="absolute bottom-0 right-0 w-full h-96 bg-gradient-to-t from-brand/10 via-transparent to-transparent pointer-events-none"></div>
         
+        {messagesError && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
+            Modo local: inicie sessão e execute o SQL do Supabase (tabela <code className="text-brand">chat_messages</code>, bucket{' '}
+            <code className="text-brand">chat-voice</code>, <code className="text-brand">chat-media</code>) e o SQL de mídia.
+          </div>
+        )}
+        {messagesLoading && !useLocalOnly && (
+          <p className="relative z-20 text-center text-xs text-gray-500 py-2">A carregar mensagens…</p>
+        )}
+
+        {peerTyping && !chat.isGroup && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative z-20 flex items-center gap-1.5 px-4 py-2"
+          >
+            <span className="text-[11px] text-gray-500 font-medium">a digitar</span>
+            <span className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <motion.span
+                  key={i}
+                  className="w-1.5 h-1.5 rounded-full bg-brand/80"
+                  animate={{ opacity: [0.3, 1, 0.3], y: [0, -3, 0] }}
+                  transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.15 }}
+                />
+              ))}
+            </span>
+          </motion.div>
+        )}
+
         <div className="relative z-10 space-y-6">
-          {messages.map((msg) => (
-            <div key={msg.id} className={cn(
-              "flex flex-col max-w-[85%] group",
-              msg.isMe ? "ml-auto items-end" : "mr-auto items-start"
-            )}>
-              <div className={cn(
-                "px-4 py-3 rounded-[22px] text-sm shadow-xl relative overflow-hidden transition-all duration-300",
-                msg.isMe 
-                  ? "bg-brand text-[#020617] font-bold rounded-tr-none shadow-brand/20" 
-                  : "bg-white/10 backdrop-blur-2xl rounded-tl-none border border-white/10 text-white"
+          {displayMessages.map((msg) => {
+            if (msg.kind === 'voice') {
+              return (
+                <div key={msg.id}>
+                  {msg.mediaUrl ? <VoiceBubble msg={msg} /> : (
+                    <div className="text-xs text-gray-500 px-2">Áudio indisponível</div>
+                  )}
+                </div>
+              );
+            }
+            if (msg.kind === 'image') {
+              return (
+                <div key={msg.id}>
+                  {msg.mediaUrl ? <ImageBubble msg={msg} /> : (
+                    <div className="text-xs text-gray-500 px-2">Imagem indisponível</div>
+                  )}
+                </div>
+              );
+            }
+            if (msg.kind === 'video') {
+              return (
+                <div key={msg.id}>
+                  {msg.mediaUrl ? <VideoBubble msg={msg} /> : (
+                    <div className="text-xs text-gray-500 px-2">Vídeo indisponível</div>
+                  )}
+                </div>
+              );
+            }
+            if (msg.kind === 'location' && msg.location) {
+              return (
+                <div key={msg.id}>
+                  <LocationBubble msg={msg} />
+                </div>
+              );
+            }
+            return (
+              <div key={msg.id} className={cn(
+                "flex flex-col max-w-[85%] group",
+                msg.isMe ? "ml-auto items-end" : "mr-auto items-start"
               )}>
-                {/* Subtle inner light effect for user messages */}
-                {msg.isMe && (
-                  <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent pointer-events-none"></div>
-                )}
-                <span className="relative z-10 leading-relaxed">{msg.text}</span>
+                <div className={cn(
+                  "px-4 py-3 rounded-[22px] text-sm shadow-xl relative overflow-hidden transition-all duration-300",
+                  msg.isMe
+                    ? "bg-brand text-[#020617] font-bold rounded-tr-none shadow-brand/20"
+                    : "bg-white/10 backdrop-blur-2xl rounded-tl-none border border-white/10 text-white"
+                )}>
+                  {msg.isMe && (
+                    <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent pointer-events-none"></div>
+                  )}
+                  <span className="relative z-10 leading-relaxed">{msg.text}</span>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5 px-1">
+                  <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+                  {msg.isMe && <ReadTicks readAt={msg.readAt} />}
+                </div>
               </div>
-              <div className="flex items-center gap-2 mt-1.5 px-1">
-                <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
-                {msg.isMe && (
-                  <div className="flex -space-x-1 opacity-80">
-                    <span className="text-brand text-[10px] font-black">✓</span>
-                    <span className="text-brand text-[10px] font-black">✓</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -343,29 +671,97 @@ export default function ChatDetailScreen({ chat, onBack }: ChatDetailProps) {
             <p className="text-xs text-gray-500 font-medium italic">Somente oficiais podem enviar mensagens</p>
           </div>
         ) : (
-          <div className="flex items-center gap-3">
-            <div className="flex-1 flex items-center gap-2 bg-white/5 rounded-2xl px-4 py-2 border border-white/10 focus-within:border-brand/40 focus-within:bg-white/10 transition-all">
-              <button className="text-gray-400 hover:text-brand transition-colors"><Smile size={22} /></button>
-              <input 
-                type="text" 
+          <div className="flex items-center gap-2">
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={(ev) => void handleMediaFile(ev)}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*,video/*"
+              capture="environment"
+              className="hidden"
+              onChange={(ev) => void handleMediaFile(ev)}
+            />
+            <div className="flex-1 flex items-center gap-2 bg-white/5 rounded-2xl px-3 py-2 border border-white/10 focus-within:border-brand/40 focus-within:bg-white/10 transition-all min-w-0">
+              <button type="button" className="text-gray-400 hover:text-brand transition-colors shrink-0">
+                <Smile size={22} />
+              </button>
+              <input
+                type="text"
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder="Mensagem" 
-                className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 placeholder:text-gray-500"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setInputText(v);
+                  if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+                  if (v.trim()) {
+                    notifyTyping(true);
+                    typingDebounceRef.current = setTimeout(() => notifyTyping(false), 2000);
+                  } else {
+                    notifyTyping(false);
+                  }
+                }}
+                onBlur={() => notifyTyping(false)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                placeholder="Mensagem"
+                className="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-2 placeholder:text-gray-500"
               />
-              <button className="text-gray-400 hover:text-brand transition-colors"><Paperclip size={22} /></button>
+              <button
+                type="button"
+                title="Galeria — fotos e vídeos"
+                onClick={() => galleryInputRef.current?.click()}
+                className="text-gray-400 hover:text-brand transition-colors shrink-0 p-0.5"
+              >
+                <Image size={22} />
+              </button>
+              <button
+                type="button"
+                title="Câmara — tirar foto ou gravar vídeo"
+                onClick={() => cameraInputRef.current?.click()}
+                className="text-gray-400 hover:text-brand transition-colors shrink-0 p-0.5"
+              >
+                <Camera size={22} />
+              </button>
             </div>
-            <button 
-              onClick={handleSendMessage}
+            <button
+              type="button"
+              title="Segure para gravar áudio"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                void startVoiceRecord();
+              }}
+              onPointerUp={() => void finishVoiceRecord()}
+              onPointerLeave={() => {
+                if (recording) void cancelVoiceRecord();
+              }}
+              onPointerCancel={() => {
+                if (recording) void cancelVoiceRecord();
+              }}
               className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-lg",
-                inputText.trim() 
-                  ? "bg-brand text-[#020617] shadow-brand/30 scale-105" 
-                  : "bg-white/5 text-gray-500"
+                'w-12 h-12 rounded-2xl flex items-center justify-center transition-all shrink-0 touch-none select-none',
+                recording ? 'bg-red-500/30 text-red-400 ring-2 ring-red-500/50' : 'bg-white/10 text-brand hover:bg-brand/20'
               )}
             >
-              <Send size={22} fill={inputText.trim() ? "currentColor" : "none"} />
+              <Mic size={22} />
+            </button>
+            {recording && (
+              <span className="text-[10px] font-bold text-red-400 tabular-nums w-8">{recordSecs}s</span>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleSendMessage()}
+              className={cn(
+                'w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-lg shrink-0',
+                inputText.trim()
+                  ? 'bg-brand text-[#020617] shadow-brand/30 scale-105'
+                  : 'bg-white/5 text-gray-500'
+              )}
+            >
+              <Send size={22} fill={inputText.trim() ? 'currentColor' : 'none'} />
             </button>
           </div>
         )}
@@ -379,22 +775,14 @@ function MemberProfileScreen({
   onBack, 
   currentUserRole,
   onPromote,
-  onBan,
-  canStartCall,
-  callActive,
-  onVoiceCall,
-  onVideoCall,
+  onBan
 }: { 
   key?: string,
   member: Member, 
   onBack: () => void, 
   currentUserRole: GroupRole,
   onPromote: (id: string, role: GroupRole) => void,
-  onBan: (id: string) => void,
-  canStartCall?: boolean,
-  callActive?: boolean,
-  onVoiceCall?: () => void,
-  onVideoCall?: () => void,
+  onBan: (id: string) => void
 }) {
   const currentPriority = ROLE_CONFIG[currentUserRole].priority;
   const targetPriority = ROLE_CONFIG[member.role].priority;
@@ -443,20 +831,8 @@ function MemberProfileScreen({
 
         <div className="flex justify-center gap-4 w-full px-4">
           <ProfileActionButton icon={<MessageSquare size={20} />} label="Mensagem" />
-          <ProfileActionButton
-            icon={<Phone size={20} />}
-            label="Voz"
-            disabled={!canStartCall || callActive}
-            onClick={onVoiceCall}
-            title={canStartCall ? 'Chamada de voz' : 'Indisponível'}
-          />
-          <ProfileActionButton
-            icon={<Video size={20} />}
-            label="Vídeo"
-            disabled={!canStartCall || callActive}
-            onClick={onVideoCall}
-            title={canStartCall ? 'Chamada de vídeo' : 'Indisponível'}
-          />
+          <ProfileActionButton icon={<Phone size={20} />} label="Voz" />
+          <ProfileActionButton icon={<Video size={20} />} label="Vídeo" />
           <ProfileActionButton icon={<Search size={20} />} label="Pesquisar" />
         </div>
       </div>
@@ -588,30 +964,9 @@ function MemberProfileScreen({
   );
 }
 
-function ProfileActionButton({
-  icon,
-  label,
-  onClick,
-  disabled,
-  title,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  title?: string;
-}) {
+function ProfileActionButton({ icon, label }: { icon: React.ReactNode, label: string }) {
   return (
-    <button
-      type="button"
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        'flex-1 flex flex-col items-center gap-2 p-3 glass rounded-2xl transition-all',
-        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'
-      )}
-    >
+    <button className="flex-1 flex flex-col items-center gap-2 p-3 glass rounded-2xl hover:bg-white/10 transition-all">
       <div className="text-brand">{icon}</div>
       <span className="text-[10px] font-bold text-brand uppercase tracking-wider">{label}</span>
     </button>
@@ -689,6 +1044,177 @@ function cn(...inputs: any[]) {
   return inputs.filter(Boolean).join(' ');
 }
 
+function ReadTicks({ readAt }: { readAt?: string | null }) {
+  const read = Boolean(readAt);
+  return (
+    <div className="flex -space-x-0.5 shrink-0">
+      <span className={cn('text-[10px] font-black', read ? 'text-blue-500' : 'text-gray-500/70')}>✓</span>
+      <span className={cn('text-[10px] font-black', read ? 'text-blue-500' : 'text-gray-500/70')}>✓</span>
+    </div>
+  );
+}
+
+function formatVoiceDuration(sec: number) {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}:${r.toString().padStart(2, '0')}` : `0:${r.toString().padStart(2, '0')}`;
+}
+
+function LocationBubble({ msg }: { msg: UiMessage }) {
+  const loc = msg.location;
+  if (!loc) return null;
+  const mapsUrl = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
+  return (
+    <div className={cn('flex flex-col max-w-[85%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <a
+        href={mapsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn(
+          'flex items-center gap-3 px-4 py-3 rounded-[22px] text-sm shadow-xl border transition-all min-w-[220px]',
+          msg.isMe
+            ? 'bg-brand text-[#020617] font-bold rounded-tr-none border-brand/40'
+            : 'bg-white/10 backdrop-blur-2xl rounded-tl-none border-white/10 text-white'
+        )}
+      >
+        <span className="shrink-0 w-10 h-10 rounded-full bg-black/20 flex items-center justify-center">
+          <MapPin size={20} />
+        </span>
+        <div className="flex-1 min-w-0 text-left">
+          <p className="font-bold truncate">{msg.text || 'Localização'}</p>
+          <p className="text-[10px] opacity-80 truncate">Toque para abrir no mapa</p>
+        </div>
+      </a>
+      <div className="flex items-center gap-2 mt-1.5 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
+      </div>
+    </div>
+  );
+}
+
+function ImageBubble({ msg }: { msg: UiMessage }) {
+  if (!msg.mediaUrl) return null;
+  return (
+    <div className={cn('flex flex-col max-w-[85%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <div
+        className={cn(
+          'rounded-[22px] overflow-hidden shadow-xl border max-w-[min(280px,85vw)]',
+          msg.isMe ? 'border-brand/30 rounded-tr-none' : 'border-white/10 rounded-tl-none'
+        )}
+      >
+        <img src={msg.mediaUrl} alt="" className="w-full h-auto object-cover max-h-72 block" referrerPolicy="no-referrer" />
+      </div>
+      {msg.text ? (
+        <p className={cn('mt-1.5 px-1 text-sm', msg.isMe ? 'text-brand/90 text-right' : 'text-gray-300')}>{msg.text}</p>
+      ) : null}
+      <div className="flex items-center gap-2 mt-1 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
+      </div>
+    </div>
+  );
+}
+
+function VideoBubble({ msg }: { msg: UiMessage }) {
+  if (!msg.mediaUrl) return null;
+  return (
+    <div className={cn('flex flex-col max-w-[85%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <div
+        className={cn(
+          'rounded-[22px] overflow-hidden shadow-xl border bg-black max-w-[min(280px,85vw)]',
+          msg.isMe ? 'border-brand/30 rounded-tr-none' : 'border-white/10 rounded-tl-none'
+        )}
+      >
+        <video
+          src={msg.mediaUrl}
+          controls
+          playsInline
+          className="w-full max-h-64 object-contain bg-black"
+          preload="metadata"
+        />
+      </div>
+      {msg.text ? (
+        <p className={cn('mt-1.5 px-1 text-sm', msg.isMe ? 'text-brand/90 text-right' : 'text-gray-300')}>{msg.text}</p>
+      ) : null}
+      <div className="flex items-center gap-2 mt-1 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.durationSec != null && msg.durationSec > 0 && (
+          <span className="text-[10px] text-gray-600">{formatVoiceDuration(msg.durationSec)}</span>
+        )}
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
+      </div>
+    </div>
+  );
+}
+
+function VoiceBubble({ msg }: { msg: UiMessage }) {
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  const toggle = () => {
+    if (!msg.mediaUrl) return;
+    if (!audioRef.current) {
+      const a = new Audio(msg.mediaUrl);
+      a.onended = () => setPlaying(false);
+      a.onpause = () => setPlaying(false);
+      audioRef.current = a;
+    }
+    const a = audioRef.current;
+    if (playing) {
+      a.pause();
+      setPlaying(false);
+    } else {
+      void a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    }
+  };
+
+  const dur = msg.durationSec ?? 0;
+
+  return (
+    <div className={cn('flex flex-col max-w-[88%] group', msg.isMe ? 'ml-auto items-end' : 'mr-auto items-start')}>
+      <button
+        type="button"
+        onClick={toggle}
+        className={cn(
+          'flex items-center gap-3 px-4 py-3 rounded-[22px] text-sm shadow-xl transition-all min-w-[200px]',
+          msg.isMe
+            ? 'bg-brand text-[#020617] font-bold rounded-tr-none shadow-brand/20'
+            : 'bg-white/10 backdrop-blur-2xl rounded-tl-none border border-white/10 text-white'
+        )}
+      >
+        <span className="shrink-0 w-9 h-9 rounded-full bg-black/15 flex items-center justify-center">
+          {playing ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+        </span>
+        <span className="flex-1 flex items-end gap-0.5 h-5 justify-center opacity-80">
+          {[4, 7, 5, 9, 4, 8, 5].map((h, i) => (
+            <span
+              key={i}
+              className={cn('w-1 rounded-full bg-current', playing && 'animate-pulse')}
+              style={{ height: `${h * 10}%`, animationDelay: `${i * 80}ms` }}
+            />
+          ))}
+        </span>
+        <span className="text-xs font-black tabular-nums shrink-0">{formatVoiceDuration(dur)}</span>
+      </button>
+      <div className="flex items-center gap-2 mt-1.5 px-1">
+        <span className="text-[10px] text-gray-500 font-bold tracking-tight">{msg.time}</span>
+        {msg.isMe && <ReadTicks readAt={msg.readAt} />}
+      </div>
+    </div>
+  );
+}
+
 function ChatInfoScreen({ 
   chat, 
   onBack, 
@@ -700,7 +1226,9 @@ function ChatInfoScreen({
   onlyAdminsCanEditInfo,
   setOnlyAdminsCanEditInfo,
   ephemeralMessages,
-  setEphemeralMessages
+  setEphemeralMessages,
+  showBlockContact,
+  onBlockContact,
 }: { 
   key?: string,
   chat: any, 
@@ -713,7 +1241,9 @@ function ChatInfoScreen({
   onlyAdminsCanEditInfo?: boolean,
   setOnlyAdminsCanEditInfo?: (val: boolean) => void,
   ephemeralMessages?: boolean,
-  setEphemeralMessages?: (val: boolean) => void
+  setEphemeralMessages?: (val: boolean) => void,
+  showBlockContact?: boolean,
+  onBlockContact?: () => void,
 }) {
   const isHighOfficer = ['Marechal', 'General'].includes(currentUserRole);
 
@@ -860,9 +1390,21 @@ function ChatInfoScreen({
         )}
 
         <div className="space-y-3">
-          <button className="w-full py-4 rounded-2xl bg-red-500/10 text-red-500 font-bold border border-red-500/20 hover:bg-red-500/20 transition-all">
-            {chat.isGroup ? 'Sair do Grupo' : 'Bloquear Contato'}
-          </button>
+          {showBlockContact && onBlockContact ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Bloquear ${chat.name}? Deixará de aparecer na lista de novos chats.`)) onBlockContact();
+              }}
+              className="w-full py-4 rounded-2xl bg-red-500/10 text-red-500 font-bold border border-red-500/20 hover:bg-red-500/20 transition-all"
+            >
+              Bloquear contacto
+            </button>
+          ) : (
+            <button type="button" className="w-full py-4 rounded-2xl bg-red-500/10 text-red-500 font-bold border border-red-500/20 hover:bg-red-500/20 transition-all">
+              {chat.isGroup ? 'Sair do Grupo' : 'Bloquear Contato'}
+            </button>
+          )}
           <button className="w-full py-4 rounded-2xl bg-white/5 text-gray-400 font-bold border border-white/10 hover:bg-white/10 transition-all">
             Denunciar
           </button>

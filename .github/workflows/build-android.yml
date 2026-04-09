@@ -1,0 +1,88 @@
+# Compila APK de debug (Capacitor + Gradle), artefacto do workflow + Release no GitHub com o .apk anexo.
+#
+# Segredos opcionais: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+# VITE_BASE_PATH=./ para o WebView carregar assets locais.
+
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web (Capacitor bundle)
+        env:
+          VITE_BASE_PATH: ./
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platforms (compileSdk 36)
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: SDK path for Gradle
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+
+      - name: Grant execute permission for Gradle
+        run: chmod +x android/gradlew
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Prepare APK for release
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk wave-android-debug.apk
+
+      - name: Upload APK (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wave-android-debug
+          path: wave-android-debug.apk
+          if-no-files-found: error
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-debug-${{ github.run_number }}
+          name: Wave Android debug — build ${{ github.run_number }}
+          body: |
+            APK de **debug** gerado automaticamente (Capacitor).
+
+            - Commit: `${{ github.sha }}`
+            - Workflow: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            Instala no telemóvel: descarrega **wave-android-debug.apk** abaixo.
+          files: wave-android-debug.apk
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,3 +1,7 @@
+# Workflow principal mínimo (evita erro "No event triggers defined in on").
+# APK Android: workflow "Build Android APK" (build-android.yml)
+# Site GitHub Pages: workflow "Deploy GitHub Pages" (deploy-pages.yml)
+
 name: CI
 
 on:

@@ -27,7 +27,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { useChatMessages, type UiMessage } from '../hooks/useChatMessages';
-import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
+import CallOverlay from '../components/CallOverlay';
+import { dmRoomKeyForPair, groupRoomKey } from '../lib/chatRooms';
+import { useWebRtcCall } from '../hooks/useWebRtcCall';
 import { validateChatMediaFile } from '../lib/mediaChat';
 import { blockUser } from '../lib/chatPreferences';
 import { useMyPresenceHeartbeat, usePeerPresence, useTypingIndicator } from '../hooks/useChatPresence';
@@ -69,20 +71,6 @@ const ROLE_CONFIG = {
   'Membro': { label: 'Membro', color: 'text-gray-500', bg: 'bg-white/5', border: 'border-white/10', icon: '👤', priority: 1 },
 };
 
-function seedLocalMessages(isGroup: boolean, selfId: string | null): UiMessage[] {
-  const isMe = Boolean(selfId);
-  return isGroup
-    ? [
-        { id: 'msg-1', kind: 'text', text: 'Bem-vindos ao grupo!', time: '09:00', isMe: false },
-        { id: 'msg-2', kind: 'text', text: 'Alguém viu as novidades da Wave?', time: '09:05', isMe: false },
-      ]
-    : [
-        { id: 'msg-1', kind: 'text', text: 'Oi! Como você está?', time: '10:00', isMe: false },
-        { id: 'msg-2', kind: 'text', text: 'Tudo bem por aqui, e você?', time: '10:02', isMe: isMe },
-        { id: 'msg-3', kind: 'text', text: 'Sua foto de hoje ficou ótima! 😍', time: '10:05', isMe: false },
-      ];
-}
-
 export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDetailProps) {
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -100,9 +88,9 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
 
   const roomKey = useMemo(() => {
     if (chat.isGroup) return groupRoomKey(chat.id);
-    if (chat.peerUserId) return dmRoomKey(chat.peerUserId);
-    return dmRoomKey(chat.id);
-  }, [chat.id, chat.isGroup, chat.peerUserId]);
+    if (chat.peerUserId && userId) return dmRoomKeyForPair(userId, chat.peerUserId);
+    return null;
+  }, [chat.id, chat.isGroup, chat.peerUserId, userId]);
 
   const {
     messages: syncedMessages,
@@ -122,38 +110,27 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const [localMessages, setLocalMessages] = useState<UiMessage[]>(() =>
-    seedLocalMessages(Boolean(chat.isGroup), null)
-  );
-  const [useLocalOnly, setUseLocalOnly] = useState(!userId);
+  const chatReady = Boolean(userId && roomKey);
+
+  const signalingEnabled = Boolean(userId && roomKey && !chat.isGroup && chat.peerUserId);
+  const rtc = useWebRtcCall(roomKey ?? '', {
+    enabled: signalingEnabled,
+    isGroup: Boolean(chat.isGroup),
+  });
+
+  const displayMessages = syncedMessages;
 
   useEffect(() => {
-    setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
-    setUseLocalOnly(!userId);
-  }, [roomKey, chat.isGroup, userId]);
-
-  useEffect(() => {
-    if (messagesError) {
-      setUseLocalOnly(true);
-      setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
-    }
-  }, [messagesError, chat.isGroup, userId]);
-
-  const displayMessages = useLocalOnly ? localMessages : syncedMessages;
-
-  useEffect(() => {
-    if (!useLocalOnly && userId && roomKey) {
-      void markOthersMessagesAsRead();
-    }
-  }, [useLocalOnly, userId, roomKey, syncedMessages.length, markOthersMessagesAsRead]);
+    if (chatReady) void markOthersMessagesAsRead();
+  }, [chatReady, roomKey, syncedMessages.length, markOthersMessagesAsRead]);
 
   const typingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifyTyping = useCallback(
     (active: boolean) => {
-      if (useLocalOnly || !userId) return;
+      if (!chatReady) return;
       sendTyping(active);
     },
-    [useLocalOnly, userId, sendTyping]
+    [chatReady, sendTyping]
   );
 
   const [recording, setRecording] = useState(false);
@@ -235,28 +212,14 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
 
     if (blob.size < 200) return;
 
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    if (useLocalOnly || !userId) {
-      const url = URL.createObjectURL(blob);
-      setLocalMessages((prev) => [
-        ...prev,
-        {
-          id: `local-v-${Date.now()}`,
-          kind: 'voice',
-          text: '',
-          time,
-          isMe: true,
-          mediaUrl: url,
-          durationSec: Math.min(300, Math.ceil(durationSec)),
-        },
-      ]);
+    if (!chatReady) {
+      alert('Conversa indisponível: em DMs usa Novo chat para escolher um contacto (UUID).');
       return;
     }
 
     const { error: vErr } = await sendVoiceMessage(blob, durationSec);
     if (vErr) alert(vErr);
-  }, [useLocalOnly, userId, sendVoiceMessage]);
+  }, [chatReady, sendVoiceMessage]);
 
   const handleMediaFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -267,26 +230,12 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
       alert(validated.error);
       return;
     }
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const isVideo = file.type.startsWith('video/');
 
     const caption = inputText.trim();
 
-    if (useLocalOnly || !userId) {
-      const url = URL.createObjectURL(file);
-      setLocalMessages((prev) => [
-        ...prev,
-        {
-          id: `local-m-${Date.now()}`,
-          kind: isVideo ? 'video' : 'image',
-          text: caption,
-          time,
-          isMe: true,
-          mediaUrl: url,
-          durationSec: validated.durationSec ?? undefined,
-        },
-      ]);
-      if (caption) setInputText('');
+    if (!chatReady) {
+      alert('Conversa indisponível: em DMs usa Novo chat para escolher um contacto (UUID).');
       return;
     }
     const { error: mErr } = await sendMediaMessage(file, caption, validated.durationSec);
@@ -350,16 +299,8 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
 
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
-    if (useLocalOnly) {
-      const newMessage: UiMessage = {
-        id: Date.now().toString(),
-        kind: 'text',
-        text: inputText.trim(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isMe: true,
-      };
-      setLocalMessages((prev) => [...prev, newMessage]);
-      setInputText('');
+    if (!chatReady) {
+      alert('Conversa indisponível: em DMs usa Novo chat para escolher um contacto (UUID).');
       return;
     }
     const { error: sendErr } = await sendSyncedMessage(inputText);
@@ -367,8 +308,14 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
     else setInputText('');
   };
 
-  const handleClearChat = () => {
-    if (useLocalOnly) setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
+  const handleClearChat = async () => {
+    if (!roomKey || !userId) {
+      setShowClearModal(false);
+      setShowMenu(false);
+      return;
+    }
+    const { error: delErr } = await supabase.from('chat_messages').delete().eq('room_key', roomKey);
+    if (delErr) alert(delErr.message || 'Não foi possível limpar. Verifica as políticas RLS no Supabase.');
     setShowClearModal(false);
     setShowMenu(false);
   };
@@ -391,19 +338,8 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         const label = 'A minha localização';
-        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        if (useLocalOnly || !userId) {
-          setLocalMessages((prev) => [
-            ...prev,
-            {
-              id: `loc-${Date.now()}`,
-              kind: 'location',
-              text: label,
-              time,
-              isMe: true,
-              location: { lat, lng, label },
-            },
-          ]);
+        if (!userId || !roomKey) {
+          alert('Conversa indisponível.');
           return;
         }
         const { error: locErr } = await sendLocationMessage(lat, lng, label);
@@ -412,7 +348,7 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
       () => alert('Permissão de localização negada ou indisponível.'),
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
     );
-  }, [useLocalOnly, userId, sendLocationMessage]);
+  }, [userId, roomKey, sendLocationMessage]);
 
   return (
     <motion.div 
@@ -519,6 +455,23 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         )}
       </AnimatePresence>
 
+      <CallOverlay
+        visible={rtc.phase !== 'idle'}
+        phase={rtc.phase}
+        kind={rtc.callKind}
+        peerName={chat.name}
+        peerAvatar={chat.avatar}
+        localStream={rtc.localStream}
+        remoteStream={rtc.remoteStream}
+        isMuted={rtc.isMuted}
+        error={rtc.error}
+        onAccept={() => void rtc.acceptCall()}
+        onReject={() => void rtc.rejectCall()}
+        onEnd={() => void rtc.endCall()}
+        onToggleMute={rtc.toggleMute}
+        onDismissError={rtc.clearError}
+      />
+
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-4 bg-[#020617]/80 backdrop-blur-xl border-b border-white/5 relative z-50">
         <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => setShowInfo(true)}>
@@ -549,8 +502,24 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Video size={20} /></button>
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Phone size={20} /></button>
+          <button
+            type="button"
+            disabled={!signalingEnabled || chat.isGroup}
+            title={chat.isGroup ? 'Chamadas em grupo em breve' : !signalingEnabled ? 'Só em DM (Novo chat)' : 'Vídeo'}
+            onClick={() => void rtc.startCall('video')}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400 disabled:opacity-30 disabled:pointer-events-none"
+          >
+            <Video size={20} />
+          </button>
+          <button
+            type="button"
+            disabled={!signalingEnabled || chat.isGroup}
+            title={chat.isGroup ? 'Chamadas em grupo em breve' : !signalingEnabled ? 'Só em DM (Novo chat)' : 'Voz'}
+            onClick={() => void rtc.startCall('audio')}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400 disabled:opacity-30 disabled:pointer-events-none"
+          >
+            <Phone size={20} />
+          </button>
           <button 
             onClick={() => setShowMenu(!showMenu)}
             className={cn("p-2 rounded-full transition-colors", showMenu ? "bg-brand/20 text-brand" : "hover:bg-white/10 text-gray-400")}
@@ -572,13 +541,22 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-brand/25 via-brand/5 to-transparent pointer-events-none"></div>
         <div className="absolute bottom-0 right-0 w-full h-96 bg-gradient-to-t from-brand/10 via-transparent to-transparent pointer-events-none"></div>
         
-        {messagesError && (
-          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
-            Modo local: inicie sessão e execute o SQL do Supabase (tabela <code className="text-brand">chat_messages</code>, bucket{' '}
-            <code className="text-brand">chat-voice</code>, <code className="text-brand">chat-media</code>) e o SQL de mídia.
+        {!userId && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-red-500/15 border border-red-500/30 text-[11px] text-red-200/90">
+            Sessão inválida. Termina sessão e volta a entrar.
           </div>
         )}
-        {messagesLoading && !useLocalOnly && (
+        {userId && !chat.isGroup && !chat.peerUserId && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
+            Esta conversa não está ligada ao Supabase. Usa <span className="font-bold">Novo chat</span> para abrir uma DM real.
+          </div>
+        )}
+        {messagesError && chatReady && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
+            Erro ao carregar mensagens: {messagesError}. Confirma a tabela <code className="text-brand">chat_messages</code>, RLS e migrações no Supabase.
+          </div>
+        )}
+        {messagesLoading && chatReady && (
           <p className="relative z-20 text-center text-xs text-gray-500 py-2">A carregar mensagens…</p>
         )}
 
@@ -603,6 +581,9 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         )}
 
         <div className="relative z-10 space-y-6">
+          {chatReady && !messagesLoading && displayMessages.length === 0 && (
+            <p className="text-center text-xs text-gray-500 py-8 px-4">Ainda não há mensagens. Escreve a primeira.</p>
+          )}
           {displayMessages.map((msg) => {
             if (msg.kind === 'voice') {
               return (
@@ -669,6 +650,12 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         {chat.isGroup && !canUserMessage ? (
           <div className="flex items-center justify-center py-3 px-4 bg-white/5 rounded-2xl border border-white/10">
             <p className="text-xs text-gray-500 font-medium italic">Somente oficiais podem enviar mensagens</p>
+          </div>
+        ) : !chatReady ? (
+          <div className="flex items-center justify-center py-3 px-4 bg-white/5 rounded-2xl border border-white/10">
+            <p className="text-xs text-gray-500 font-medium text-center">
+              Mensagens só com conversa válida (DM via Novo chat ou grupo).
+            </p>
           </div>
         ) : (
           <div className="flex items-center gap-2">

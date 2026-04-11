@@ -1,6 +1,6 @@
 # Compila APK de debug (Capacitor + Gradle), artefacto do workflow + Release no GitHub com o .apk anexo.
 #
-# Segredos opcionais: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+# Segredos opcionais: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_YOUTUBE_API_KEY (Reels / Shorts)
 # VITE_BASE_PATH=./ para o WebView carregar assets locais.
 
 name: Build Android APK
@@ -32,6 +32,9 @@ jobs:
           VITE_BASE_PATH: ./
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_YOUTUBE_API_KEY: ${{ secrets.VITE_YOUTUBE_API_KEY }}
+          VITE_YOUTUBE_PLAYLIST_ID: ${{ secrets.VITE_YOUTUBE_PLAYLIST_ID }}
+          VITE_YOUTUBE_SHORTS_QUERY: ${{ secrets.VITE_YOUTUBE_SHORTS_QUERY }}
         run: npm run build
 
       - name: Sync Capacitor Android

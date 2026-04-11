@@ -5,7 +5,7 @@
 # 2. Faz merge disto na branch que dispara o workflow (main).
 # 3. URL: https://<utilizador>.github.io/<nome-do-repo>/
 #
-# Segredos opcionais (se usares VITE_* no código): VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+# Segredos opcionais: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_YOUTUBE_* (Reels)
 
 name: Deploy GitHub Pages
 
@@ -39,6 +39,9 @@ jobs:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_YOUTUBE_API_KEY: ${{ secrets.VITE_YOUTUBE_API_KEY }}
+          VITE_YOUTUBE_PLAYLIST_ID: ${{ secrets.VITE_YOUTUBE_PLAYLIST_ID }}
+          VITE_YOUTUBE_SHORTS_QUERY: ${{ secrets.VITE_YOUTUBE_SHORTS_QUERY }}
         run: |
           npm ci
           npm run build

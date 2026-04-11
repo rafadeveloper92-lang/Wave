@@ -27,7 +27,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { useChatMessages, type UiMessage } from '../hooks/useChatMessages';
-import { dmRoomKey, groupRoomKey } from '../lib/chatRooms';
+import CallOverlay from '../components/CallOverlay';
+import { dmRoomKeyForPair, groupRoomKey } from '../lib/chatRooms';
+import { useWebRtcCall } from '../hooks/useWebRtcCall';
 import { validateChatMediaFile } from '../lib/mediaChat';
 import { blockUser } from '../lib/chatPreferences';
 import { useMyPresenceHeartbeat, usePeerPresence, useTypingIndicator } from '../hooks/useChatPresence';
@@ -69,18 +71,8 @@ const ROLE_CONFIG = {
   'Membro': { label: 'Membro', color: 'text-gray-500', bg: 'bg-white/5', border: 'border-white/10', icon: '👤', priority: 1 },
 };
 
-function seedLocalMessages(isGroup: boolean, selfId: string | null): UiMessage[] {
-  const isMe = Boolean(selfId);
-  return isGroup
-    ? [
-        { id: 'msg-1', kind: 'text', text: 'Bem-vindos ao grupo!', time: '09:00', isMe: false },
-        { id: 'msg-2', kind: 'text', text: 'Alguém viu as novidades da Wave?', time: '09:05', isMe: false },
-      ]
-    : [
-        { id: 'msg-1', kind: 'text', text: 'Oi! Como você está?', time: '10:00', isMe: false },
-        { id: 'msg-2', kind: 'text', text: 'Tudo bem por aqui, e você?', time: '10:02', isMe: isMe },
-        { id: 'msg-3', kind: 'text', text: 'Sua foto de hoje ficou ótima! 😍', time: '10:05', isMe: false },
-      ];
+function emptyLocalMessages(): UiMessage[] {
+  return [];
 }
 
 export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDetailProps) {
@@ -100,9 +92,9 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
 
   const roomKey = useMemo(() => {
     if (chat.isGroup) return groupRoomKey(chat.id);
-    if (chat.peerUserId) return dmRoomKey(chat.peerUserId);
-    return dmRoomKey(chat.id);
-  }, [chat.id, chat.isGroup, chat.peerUserId]);
+    if (chat.peerUserId && userId) return dmRoomKeyForPair(userId, chat.peerUserId);
+    return null;
+  }, [chat.id, chat.isGroup, chat.peerUserId, userId]);
 
   const {
     messages: syncedMessages,
@@ -122,22 +114,26 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const [localMessages, setLocalMessages] = useState<UiMessage[]>(() =>
-    seedLocalMessages(Boolean(chat.isGroup), null)
-  );
+  const [localMessages, setLocalMessages] = useState<UiMessage[]>(() => emptyLocalMessages());
   const [useLocalOnly, setUseLocalOnly] = useState(!userId);
 
   useEffect(() => {
-    setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
-    setUseLocalOnly(!userId);
+    setLocalMessages(emptyLocalMessages());
+    setUseLocalOnly(!userId || !roomKey);
   }, [roomKey, chat.isGroup, userId]);
 
   useEffect(() => {
     if (messagesError) {
       setUseLocalOnly(true);
-      setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
+      setLocalMessages(emptyLocalMessages());
     }
   }, [messagesError, chat.isGroup, userId]);
+
+  const signalingEnabled = Boolean(userId && roomKey && !chat.isGroup && chat.peerUserId);
+  const rtc = useWebRtcCall(roomKey ?? '', {
+    enabled: signalingEnabled,
+    isGroup: Boolean(chat.isGroup),
+  });
 
   const displayMessages = useLocalOnly ? localMessages : syncedMessages;
 
@@ -368,7 +364,7 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
   };
 
   const handleClearChat = () => {
-    if (useLocalOnly) setLocalMessages(seedLocalMessages(Boolean(chat.isGroup), userId));
+    if (useLocalOnly) setLocalMessages(emptyLocalMessages());
     setShowClearModal(false);
     setShowMenu(false);
   };
@@ -519,6 +515,23 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         )}
       </AnimatePresence>
 
+      <CallOverlay
+        visible={rtc.phase !== 'idle'}
+        phase={rtc.phase}
+        kind={rtc.callKind}
+        peerName={chat.name}
+        peerAvatar={chat.avatar}
+        localStream={rtc.localStream}
+        remoteStream={rtc.remoteStream}
+        isMuted={rtc.isMuted}
+        error={rtc.error}
+        onAccept={() => void rtc.acceptCall()}
+        onReject={() => void rtc.rejectCall()}
+        onEnd={() => void rtc.endCall()}
+        onToggleMute={rtc.toggleMute}
+        onDismissError={rtc.clearError}
+      />
+
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-4 bg-[#020617]/80 backdrop-blur-xl border-b border-white/5 relative z-50">
         <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => setShowInfo(true)}>
@@ -549,8 +562,24 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Video size={20} /></button>
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><Phone size={20} /></button>
+          <button
+            type="button"
+            disabled={!signalingEnabled || chat.isGroup}
+            title={chat.isGroup ? 'Chamadas em grupo em breve' : !signalingEnabled ? 'Precisas de sessão e DM com UUID' : 'Vídeo'}
+            onClick={() => void rtc.startCall('video')}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400 disabled:opacity-30 disabled:pointer-events-none"
+          >
+            <Video size={20} />
+          </button>
+          <button
+            type="button"
+            disabled={!signalingEnabled || chat.isGroup}
+            title={chat.isGroup ? 'Chamadas em grupo em breve' : !signalingEnabled ? 'Precisas de sessão e DM com UUID' : 'Voz'}
+            onClick={() => void rtc.startCall('audio')}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400 disabled:opacity-30 disabled:pointer-events-none"
+          >
+            <Phone size={20} />
+          </button>
           <button 
             onClick={() => setShowMenu(!showMenu)}
             className={cn("p-2 rounded-full transition-colors", showMenu ? "bg-brand/20 text-brand" : "hover:bg-white/10 text-gray-400")}
@@ -572,10 +601,20 @@ export default function ChatDetailScreen({ chat, onBack, onChatRemoved }: ChatDe
         <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-brand/25 via-brand/5 to-transparent pointer-events-none"></div>
         <div className="absolute bottom-0 right-0 w-full h-96 bg-gradient-to-t from-brand/10 via-transparent to-transparent pointer-events-none"></div>
         
+        {!userId && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
+            Inicia sessão para sincronizar mensagens no Supabase.
+          </div>
+        )}
+        {userId && !chat.isGroup && !chat.peerUserId && (
+          <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
+            Este chat não tem contacto Supabase. Usa <span className="font-bold">Novo chat</span> para abrir uma conversa real.
+          </div>
+        )}
         {messagesError && (
           <div className="relative z-20 mx-4 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-200/90">
-            Modo local: inicie sessão e execute o SQL do Supabase (tabela <code className="text-brand">chat_messages</code>, bucket{' '}
-            <code className="text-brand">chat-voice</code>, <code className="text-brand">chat-media</code>) e o SQL de mídia.
+            Não foi possível carregar do Supabase: {messagesError}. Confirma as migrações (tabela{' '}
+            <code className="text-brand">chat_messages</code>, buckets, RLS) e o Realtime.
           </div>
         )}
         {messagesLoading && !useLocalOnly && (

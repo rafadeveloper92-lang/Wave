@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { 
   MessageSquare, 
   Rss, 
@@ -22,10 +22,55 @@ import ProfileScreen from './pages/ProfileScreen';
 import TodosScreen from './pages/TodosScreen';
 import ChatDetailScreen from './pages/ChatDetailScreen';
 import { AnimatePresence, motion } from 'motion/react';
+import { useAuth } from './contexts/AuthContext';
+import AuthScreen from './components/AuthScreen';
+import { loadProfile } from './lib/waveLocalUi';
 
 type Tab = 'chats' | 'reels' | 'groups' | 'discover' | 'profile' | 'todos';
 
+const HIDDEN_CHATS_KEY = 'wave-hidden-chat-ids-v1';
+
+function loadHiddenChatIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_CHATS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((x): x is string => typeof x === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
 export default function App() {
+  const { session, loading: authLoading } = useAuth();
+  const [headerAvatar, setHeaderAvatar] = useState(() => loadProfile().profilePic);
+  const [hiddenChatIds, setHiddenChatIds] = useState<Set<string>>(() =>
+    typeof localStorage !== 'undefined' ? loadHiddenChatIds() : new Set()
+  );
+
+  useEffect(() => {
+    const onProfile = () => setHeaderAvatar(loadProfile().profilePic);
+    window.addEventListener('wave-profile-changed', onProfile);
+    return () => window.removeEventListener('wave-profile-changed', onProfile);
+  }, []);
+
+  const persistHidden = useCallback((next: Set<string>) => {
+    setHiddenChatIds(next);
+    try {
+      localStorage.setItem(HIDDEN_CHATS_KEY, JSON.stringify([...next]));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const handleChatRemovedPersist = useCallback(
+    (chatId: string) => {
+      persistHidden(new Set([...hiddenChatIds, chatId]));
+    },
+    [hiddenChatIds, persistHidden]
+  );
+
   const [activeTab, setActiveTab] = useState<Tab>('chats');
   const [selectedChat, setSelectedChat] = useState<any>(null);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
@@ -33,9 +78,35 @@ export default function App() {
   const [selectedVideo, setSelectedVideo] = useState<any>(null);
   const [selectedProfile, setSelectedProfile] = useState<any>(null);
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#020617] text-gray-400 text-sm font-sans">
+        A carregar…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
   const renderScreen = () => {
     switch (activeTab) {
-      case 'chats': return <ChatsScreen onChatClick={(chat) => setSelectedChat(chat)} />;
+      case 'chats':
+        return (
+          <ChatsScreen
+            hiddenChatIds={hiddenChatIds}
+            onChatClick={(chat) => {
+              if (hiddenChatIds.has(chat.id)) {
+                const next = new Set(hiddenChatIds);
+                next.delete(chat.id);
+                persistHidden(next);
+              }
+              setSelectedChat(chat);
+            }}
+            onChatRemovedPersist={handleChatRemovedPersist}
+          />
+        );
       case 'reels': return <ReelsScreen onProfileClick={(user) => setSelectedProfile(user)} />;
       case 'groups': return <GroupsScreen onGroupClick={(group) => setSelectedGroup(group)} />;
       case 'discover': return <DiscoverScreen />;
@@ -52,7 +123,8 @@ export default function App() {
           <ChatDetailScreen 
             key={`chat-detail-${selectedChat.id}`}
             chat={selectedChat} 
-            onBack={() => setSelectedChat(null)} 
+            onBack={() => setSelectedChat(null)}
+            onChatRemoved={handleChatRemovedPersist}
           />
         )}
         {selectedGroup && (
@@ -139,9 +211,9 @@ export default function App() {
           </div>
           <div className="w-10 h-10 rounded-full border-2 border-brand p-0.5 shadow-[0_0_10px_rgba(45,212,191,0.3)]">
             <img 
-              src="https://i.pravatar.cc/150?u=me" 
-              alt="Me" 
-              className="w-full h-full rounded-full cursor-pointer object-cover"
+              src={headerAvatar} 
+              alt="Conta" 
+              className="w-full h-full rounded-full object-cover"
               referrerPolicy="no-referrer"
             />
           </div>

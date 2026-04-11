@@ -2,6 +2,12 @@ export function dmRoomKey(chatId: string) {
   return `wave:public:dm:${chatId}`;
 }
 
+/** Sala canónica para DM: mesma string para os dois utilizadores (ordenação por UUID). */
+export function dmRoomKeyForPair(userIdA: string, userIdB: string) {
+  const [x, y] = [userIdA, userIdB].sort();
+  return `wave:public:dm:${x}:${y}`;
+}
+
 export function groupRoomKey(groupId: string) {
   return `wave:public:group:${groupId}`;
 }

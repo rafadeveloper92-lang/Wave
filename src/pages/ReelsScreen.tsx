@@ -4,29 +4,6 @@ import { Heart, MessageCircle, Share2, Music, UserPlus, MoreVertical, Volume2, V
 import { cn } from '../lib/utils';
 import { supabase } from '../services/supabaseClient';
 
-const mockReels = [
-  {
-    id: 'reel-1',
-    user: { name: 'lucas_silva', avatar: 'https://i.pravatar.cc/150?u=lucas' },
-    description: 'Vibe de hoje! 🌊 #praia #verao #wave',
-    music: 'Matuê - Vampiro',
-    video: 'https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-ocean-near-the-shore-4302-large.mp4',
-    likes: '125K',
-    comments: '1.2K',
-    shares: '45K'
-  },
-  {
-    id: 'reel-2',
-    user: { name: 'ana_clara', avatar: 'https://i.pravatar.cc/150?u=ana' },
-    description: 'Aquela resenha com os amigos! 🍻 #resenha #amigos',
-    music: 'Simone Mendes - Erro Gostoso',
-    video: 'https://assets.mixkit.co/videos/preview/mixkit-girl-in-neon-light-dancing-40150-large.mp4',
-    likes: '89K',
-    comments: '850',
-    shares: '12K'
-  }
-];
-
 export default function ReelsScreen({ onProfileClick }: { onProfileClick?: (user: any) => void }) {
   const [reels, setReels] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,12 +39,11 @@ export default function ReelsScreen({ onProfileClick }: { onProfileClick?: (user
         }));
         setReels(formattedReels);
       } else {
-        // Se não houver dados no Supabase, usa os mocks
-        setReels(mockReels);
+        setReels([]);
       }
     } catch (err) {
       console.error('Erro ao buscar reels:', err);
-      setReels(mockReels);
+      setReels([]);
     } finally {
       setLoading(false);
     }
@@ -92,6 +68,17 @@ export default function ReelsScreen({ onProfileClick }: { onProfileClick?: (user
       <div className="h-full w-full flex flex-col items-center justify-center bg-black text-white gap-4">
         <Loader2 className="w-10 h-10 text-brand animate-spin" />
         <p className="text-sm font-medium animate-pulse">Carregando Reels...</p>
+      </div>
+    );
+  }
+
+  if (!loading && reels.length === 0) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center bg-black text-white px-8 text-center gap-3">
+        <p className="text-sm font-medium text-gray-300">Ainda não há reels na base de dados.</p>
+        <p className="text-xs text-gray-500 max-w-xs">
+          Cria a tabela <code className="text-brand">reels</code> no Supabase e insere linhas com <code className="text-brand">video_url</code>, ou usa o SQL do teu projeto. Enquanto isso, esta secção fica vazia (sem vídeos de demonstração).
+        </p>
       </div>
     );
   }

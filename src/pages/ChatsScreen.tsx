@@ -5,14 +5,16 @@ import { cn } from '../lib/utils';
 import NewChatScreen from '../components/NewChatScreen';
 import StatusEditor from '../components/StatusEditor';
 import { sortChatsWithPins, togglePinChat, isChatPinned, getBlockedUsers, unblockUser } from '../lib/chatPreferences';
-
-const mockChats = [
-  { id: 'chat-1', name: 'Ana Silva', avatar: 'https://i.pravatar.cc/150?u=ana', message: 'Sua foto de hoje ficou ótima! 😍', time: '1m', unread: 2, online: true },
-  { id: 'chat-2', name: 'Grupo Família', avatar: 'https://i.pravatar.cc/150?u=family', message: 'Mãe: O almoço tá pronto! 🥘', time: '5m', unread: 1, online: false },
-  { id: 'chat-3', name: 'João Pereira', avatar: 'https://i.pravatar.cc/150?u=joao', message: 'Vamos sim! Às 18h?', time: '15m', unread: 0, online: true },
-  { id: 'chat-4', name: 'Comunidade Tech', avatar: 'https://i.pravatar.cc/150?u=tech', message: 'Lucas: Novidades na Wave!', time: '30m', unread: 0, online: false },
-  { id: 'chat-5', name: 'Maria Souza', avatar: 'https://i.pravatar.cc/150?u=maria', message: 'Oi, tudo bem?', time: '1h', unread: 0, online: true },
-];
+import { useAuth } from '../contexts/AuthContext';
+import {
+  loadChatList,
+  saveChatList,
+  loadMyStatuses,
+  saveMyStatuses,
+  loadProfile,
+  type PersistedChat,
+  type PersistedStatusItem,
+} from '../lib/waveLocalUi';
 
 const statusData = [
   { id: 'status-1', name: 'Ana Silva', avatar: 'https://i.pravatar.cc/150?u=ana', items: [{ id: 's1', image: 'https://picsum.photos/seed/travel/1080/1920', time: 'Há 5 minutos', overlays: [] }] },
@@ -20,13 +22,42 @@ const statusData = [
   { id: 'status-3', name: 'Maria Souza', avatar: 'https://i.pravatar.cc/150?u=maria', items: [{ id: 's3', image: 'https://picsum.photos/seed/tech/1080/1920', time: 'Há 3 horas', overlays: [] }] },
 ];
 
-export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) => void }) {
-  const [chats, setChats] = useState(mockChats);
+export default function ChatsScreen({
+  onChatClick,
+  onChatRemovedPersist,
+  hiddenChatIds,
+}: {
+  onChatClick: (chat: any) => void;
+  onChatRemovedPersist?: (chatId: string) => void;
+  hiddenChatIds?: Set<string>;
+}) {
+  const { user } = useAuth();
+  const [chats, setChats] = useState<PersistedChat[]>(() => loadChatList());
+  const [myAvatar, setMyAvatar] = useState(() => loadProfile().profilePic);
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewChat, setShowNewChat] = useState(false);
   const [showStatusViewer, setShowStatusViewer] = useState<{ name: string, avatar: string, items: any[] } | null>(null);
   const [showStatusEditor, setShowStatusEditor] = useState<string | null>(null);
-  const [myStatuses, setMyStatuses] = useState<any[]>([]);
+  const [myStatuses, setMyStatuses] = useState<PersistedStatusItem[]>(() => loadMyStatuses());
+
+  useEffect(() => {
+    const onProfile = () => setMyAvatar(loadProfile().profilePic);
+    window.addEventListener('wave-profile-changed', onProfile);
+    return () => window.removeEventListener('wave-profile-changed', onProfile);
+  }, []);
+
+  useEffect(() => {
+    setChats(loadChatList());
+    setMyStatuses(loadMyStatuses());
+  }, [user?.id]);
+
+  useEffect(() => {
+    saveChatList(chats);
+  }, [chats]);
+
+  useEffect(() => {
+    saveMyStatuses(myStatuses);
+  }, [myStatuses]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
@@ -157,7 +188,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
     if (existingChat) {
       onChatClick(existingChat);
     } else {
-      const newChat = {
+      const newChat: PersistedChat = {
         id: `dm-${peerId}`,
         peerUserId: peerId,
         name: contact.name,
@@ -167,7 +198,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
         unread: 0,
         online: true,
       };
-      setChats([newChat, ...chats]);
+      setChats((prev) => [newChat, ...prev]);
       onChatClick(newChat);
     }
     setShowNewChat(false);
@@ -184,23 +215,25 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
     }
   };
 
-  const handleSaveStatus = (data: { image: string, overlays: any[] }) => {
-    const newStatus = {
+  const handleSaveStatus = (data: { image: string; overlays: any[] }) => {
+    const newStatus: PersistedStatusItem = {
       id: `status-${Date.now()}`,
       image: data.image,
       overlays: data.overlays,
-      time: 'Agora'
+      time: 'Agora',
     };
-    setMyStatuses(prev => [...prev, newStatus]);
+    setMyStatuses((prev) => [...prev, newStatus]);
     setShowStatusEditor(null);
   };
 
   const filteredChats = sortChatsWithPins(
-    chats.filter(
-      (chat) =>
-        chat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        chat.message.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    chats
+      .filter((c) => !hiddenChatIds?.has(c.id))
+      .filter(
+        (chat) =>
+          chat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          chat.message.toLowerCase().includes(searchQuery.toLowerCase())
+      )
   ) as typeof chats;
   void pinTick;
   void blockListTick;
@@ -282,8 +315,8 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                   if (myStatuses.length > 0) {
                     setShowStatusViewer({
                       name: 'Meu Status',
-                      avatar: 'https://i.pravatar.cc/150?u=me',
-                      items: myStatuses
+                      avatar: myAvatar,
+                      items: myStatuses,
                     });
                   } else {
                     fileInputRef.current?.click();
@@ -295,7 +328,7 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                 )}
               >
                 <img 
-                  src="https://i.pravatar.cc/150?u=me" 
+                  src={myAvatar} 
                   alt="Meu Status" 
                   className="w-full h-full rounded-full object-cover"
                   referrerPolicy="no-referrer"
@@ -446,9 +479,10 @@ export default function ChatsScreen({ onChatClick }: { onChatClick: (chat: any) 
                   variant="danger"
                   onClick={() => {
                     if (selectedChat) {
-                      window.dispatchEvent(
-                        new CustomEvent('wave-chat-removed', { detail: { chatId: selectedChat.id } })
-                      );
+                      const id = selectedChat.id;
+                      setChats((prev) => prev.filter((c) => c.id !== id));
+                      onChatRemovedPersist?.(id);
+                      window.dispatchEvent(new CustomEvent('wave-chat-removed', { detail: { chatId: id } }));
                     }
                     setSelectedChat(null);
                   }}

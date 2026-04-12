@@ -1,0 +1,64 @@
+# Compila a app iOS para o **simulador** (ficheiro .app empacotado em ZIP).
+# Apple não permite gerar IPA assinado para dispositivo real em runners públicos sem certificados (Fastlane Match / secrets).
+#
+# Para instalar em iPhone físico: macOS + Xcode → abrir ios/App/App.xcodeproj → Team + Run.
+#
+# Segredos opcionais (igual ao Android): VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_YOUTUBE_*
+
+name: Build iOS (simulator)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ios-simulator:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web + sync Capacitor iOS
+        env:
+          VITE_BASE_PATH: ./
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_YOUTUBE_API_KEY: ${{ secrets.VITE_YOUTUBE_API_KEY }}
+          VITE_YOUTUBE_PLAYLIST_ID: ${{ secrets.VITE_YOUTUBE_PLAYLIST_ID }}
+          VITE_YOUTUBE_SHORTS_QUERY: ${{ secrets.VITE_YOUTUBE_SHORTS_QUERY }}
+        run: npm run build && npx cap sync ios
+
+      - name: Xcode build (Simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-ios \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Zip .app for artifact
+        run: |
+          APP=$(find build-ios -name 'App.app' -type d | head -1)
+          test -n "$APP"
+          ditto -c -k --keepParent "$APP" wave-ios-simulator-app.zip
+
+      - name: Upload simulator build
+        uses: actions/upload-artifact@v4
+        with:
+          name: wave-ios-simulator
+          path: wave-ios-simulator-app.zip
+          if-no-files-found: error
